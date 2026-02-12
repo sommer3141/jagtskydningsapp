@@ -349,7 +349,7 @@ def nySkydning(session):
                         Fieldset(
                             Div(Input(name="skydning_sted", type="text", placeholder="Sted", style="padding: 5px; margin: 5px;",)),
                             Div(Input(name="skydning_dato", type="date", style="padding: 5px; margin: 5px;")),
-                            Div(Select(Option("Træning", value="Træning"), Option("Tavle", value="Tavle"), Option("DM", value="DM"), Option("Femkant", value="Femkant"), Option("Grand Prix", value="Grand Prix"),
+                            Div(Select(Option("Træning", value="Træning"), Option("Tavle", value="Tavle"), Option("DM", value="DM"), Option("Femkant", value="Femkant"), Option("Grand Prix", value="Grand Prix"), Option("Amtsturnering", value="Amtsturnering"),
                                                     Option("Hold DM", value="Hold DM"), Option("Andet Konkurrence", value="Andet Konkurrence"), Option("Andet", value="Andet"),
                                                     name="skydning_occation", placeholder="Anledning", style="padding: 5px; margin: 5px;",)),
                             Div(Select(Option(40), Option(24), name="skydning_type", style="padding: 5px; margin: 5px;", placeholder="40/24"), Label("40/24")),
