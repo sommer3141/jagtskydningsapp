@@ -109,7 +109,7 @@ def getLogin(session):
                          Div(Input(name="adgangskode", type="password", placeholder="Adgangskode", style="padding: 5px; margin: 5px;"))
                          , Button("Log ind", type="submit", style="padding: 5px; margin: 5px;")),
                              method="post", hx_on__after_request="this.reset()", hx_swap="outerHTML", action="/login"
-                        ), id="loginPage"
+                        ), id="loginPage", style="text-align: center; padding: 50px; width: auto;"
                 )
                 , getFoot())
 
@@ -159,7 +159,7 @@ def startPage(session):
                             )
                         ),
                         Tbody(*[tilFoejSkydniner(entry) for entry in data]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;", id="skydningTable"
-                    ), id="startPage"
+                    ), id="startPage", style="text-align: center; padding: 50px; width: auto;"
                 )
                 , getFoot())
 
@@ -188,7 +188,7 @@ def nySkydning(session):
                             Div(Select(getDropDownShots(),name="skydning_spids_skud", type="number", placeholder="Spids skud", style="padding: 5px; margin: 5px;"), Label("Spids skud")),        
                             Button("Gem skydning", type="submit", style="padding: 5px; margin: 5px;")
                         ), method="post", hx_on__after_request="this.reset()", hx_swap="outerHTML", action="/gemSkydning", hx_target="#startPage"
-                    ), id="nySkydningPage"
+                    ), id="nySkydningPage", style="text-align: center; padding: 50px; width: auto;"
                 )
                 , getFoot())
 
@@ -205,7 +205,7 @@ def gemSkydning(session, skydning_sted: str, skydning_dato: str, skydning_occati
                     Body(
                         H1("Fejl"),
                         P("Der opstod en fejl ved gemning af skydningen. Prøv igen senere."),
-                        Button("Tilbage til start", hx_get="/start"), id="errorPage"
+                        Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
                     ), getFoot())
     return Redirect("/start")
 
