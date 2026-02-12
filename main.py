@@ -32,7 +32,15 @@ def getShootingData(userId: int = None):
         print(f"Fejl ved hentning af data: {e}")
         return []
     return response.data
-    
+
+def deleteShootingData(skydning_id: int, userId: int = None):
+    try:
+        response = supabase.table("skydning").delete().eq("id", skydning_id).eq("userId", userId).execute()
+    except Exception as e:
+        print(f"Fejl ved sletning af data: {e}")
+        return False
+    return True
+
 def saveShootingData(place: str, useriD: int, date: str, occation: str, type: int, result_hit: int, result_shot: int, venstre :int, venstre_skud: int, hoejre: int, hoejre_skud: int, bag: int , bag_skud: int, spids: int, spids_skud: int):
     try:
         response = supabase.table("skydning").insert({
@@ -94,15 +102,37 @@ def tilFoejSkydniner(entry):
         Td(str(entry["bag_skud"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
         Td(str(entry["spids"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
         Td(str(entry["spids_skud"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+        Td(A("Slet", href=f"/sletSkydning/{entry['id']}", style="display: inline-block; margin: 5px; padding: 5px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;"),
+)
     )
+
+@app.route("/sletSkydning/{skydning_id}")
+def sletSkydning(session, skydning_id: int):
+    userId = session.get(SESSION_TOKEN)
+    if userId is None:
+        return Html(getHead(),
+                    Body(
+                        H1("Fejl"),
+                        P("Du skal være logget ind for at slette en skydning."),
+                        Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
+                    ), getFoot())
+    success = deleteShootingData(skydning_id, userId)
+    if not success:
+        return Html(getHead(),
+                    Body(
+                        H1("Fejl"),
+                        P("Der opstod en fejl ved sletning af skydningen. Prøv igen senere."),
+                        Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
+                    ), getFoot())
+    return Redirect("/start")
+
 
 @app.route("/")
 def getLogin(session):
-    print(f"Session ved login: {session}")
     return Html(getHead(),
                 Body(
                     H1("Velkommen til Jagtskydningsappen!"),
-                    P("Du kan oprette nye skydninger, se dine tidligere resultater og få tips til at forbedre din præcision."),
+                    P("Du kan oprette nye skydninger og se dine tidligere resultater."),
                     Form(
                         Fieldset(
                         Div(Input(name="brugernavn", type="text", placeholder="Brugernavn", style="padding: 5px; margin: 5px;",)),
@@ -136,7 +166,6 @@ def startPage(session):
     return Html(getHead(),
                 Body(
                     H1("Velkommen til Jagtskydningsappen!"),
-                    P("Du kan oprette nye skydninger, se dine tidligere resultater g på sigt måske fået noget utroligt sigende og mega sandt statistik :D ."),
                     A("Opret ny skydning", href="/nySkydning", style="display: inline-block; margin: 10px; padding: 10px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;"),
                     P(),
                     Table(
@@ -155,11 +184,12 @@ def startPage(session):
                                 Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
                                 Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
                                 Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
+                                Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                Th(" ", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
                             )
                         ),
-                        Tbody(*[tilFoejSkydniner(entry) for entry in data]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;", id="skydningTable"
-                    ), id="startPage", style="text-align: center; padding: 50px; width: auto;"
+                        Tbody(*[tilFoejSkydniner(entry) for entry in data]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="skydningTable"
+                    ), id="startPage", style="text-align: center; padding: 50px; width: auto; align-items: center; display: flex; flex-direction: column;"
                 )
                 , getFoot())
 
@@ -186,7 +216,7 @@ def nySkydning(session):
                             Div(Select(getDropDownShots(),name="skydning_bag_skud", type="number", placeholder="Bag skud", style="padding: 5px; margin: 5px;"), Label("Bag skud")),
                             Div(Select(getDropDownHits(),name="skydning_spids", placeholder="Spids", style="padding: 5px; margin: 5px;"), Label("Spids")),
                             Div(Select(getDropDownShots(),name="skydning_spids_skud", type="number", placeholder="Spids skud", style="padding: 5px; margin: 5px;"), Label("Spids skud")),        
-                            Button("Gem skydning", type="submit", style="padding: 5px; margin: 5px;")
+                            Div(Button("Gem skydning", type="submit", style="padding: 5px; margin: 5px;"))
                         ), method="post", hx_on__after_request="this.reset()", hx_swap="outerHTML", action="/gemSkydning", hx_target="#startPage"
                     ), id="nySkydningPage", style="text-align: center; padding: 50px; width: auto;"
                 )
