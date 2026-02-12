@@ -1,4 +1,5 @@
 import os
+import pandas as pd
 from dotenv import load_dotenv
 from fasthtml.common import *
 from supabase import create_client
@@ -40,6 +41,52 @@ def deleteShootingData(skydning_id: int, userId: int = None):
         print(f"Fejl ved sletning af data: {e}")
         return False
     return True
+
+def getAverages(data):
+    if not data:
+        return {}
+    df = pd.DataFrame(data)
+    occasion_averages = df.groupby("occasion").agg({
+        "result_hit": "mean",
+        "result_shots": "mean",
+        "venstre": "mean",
+        "venstre_skud": "mean",
+        "hoejre": "mean",
+        "hoejre_skud": "mean",
+        "bag": "mean",
+        "bag_skud": "mean",
+        "spids": "mean",
+        "spids_skud": "mean"
+    }).reset_index()
+    location_averages = df.groupby("place").agg({
+        "result_hit": "mean",
+        "result_shots": "mean",
+        "venstre": "mean",
+        "venstre_skud": "mean",
+        "hoejre": "mean",
+        "hoejre_skud": "mean",
+        "bag": "mean",
+        "bag_skud": "mean",
+        "spids": "mean",
+        "spids_skud": "mean"
+    }).reset_index()
+    normal_averages = df.agg({
+        "result_hit": "mean",
+        "result_shots": "mean",
+        "venstre": "mean",
+        "venstre_skud": "mean",
+        "hoejre": "mean",
+        "hoejre_skud": "mean",
+        "bag": "mean",
+        "bag_skud": "mean",
+        "spids": "mean",
+        "spids_skud": "mean"
+    }).to_frame().T
+    return {
+        "occasion_averages": occasion_averages.to_dict(orient="records"),
+        "location_averages": location_averages.to_dict(orient="records"),
+        "normal_averages": normal_averages.to_dict(orient="records")[0]
+    }
 
 def saveShootingData(place: str, useriD: int, date: str, occation: str, type: int, result_hit: int, result_shot: int, venstre :int, venstre_skud: int, hoejre: int, hoejre_skud: int, bag: int , bag_skud: int, spids: int, spids_skud: int):
     try:
@@ -163,32 +210,130 @@ def login(session, brugernavn: str, adgangskode: str):
 def startPage(session):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
+    averages = getAverages(data)
     return Html(getHead(),
                 Body(
                     H1("Velkommen til Jagtskydningsappen!"),
                     A("Opret ny skydning", href="/nySkydning", style="display: inline-block; margin: 10px; padding: 10px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;"),
                     P(),
-                    Table(
-                        Thead(
-                            Tr(
-                                Th("Sted", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Dato", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Anledning", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("40/24", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                Th(" ", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
-                            )
-                        ),
-                        Tbody(*[tilFoejSkydniner(entry) for entry in data]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="skydningTable"
+                    Card("Skydninger",
+                        Table(
+                            Thead(
+                                Tr(
+                                    Th("Sted", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Dato", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Anledning", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("40/24", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                    Th(" ", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
+                                )
+                            ),
+                            Tbody(*[tilFoejSkydniner(entry) for entry in data]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="skydningTable"
+                        ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
+                    ),
+                     Card("Gennemsnit per anledning",
+                            Table(
+                                Thead(
+                                    Tr(
+                                        Th("Anledning", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
+                                    )
+                                ),
+                                Tbody(*[Tr(
+                                    Td(occasion["occasion"], style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["result_hit"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["result_shots"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["venstre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["venstre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["hoejre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["hoejre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["bag"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["bag_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["spids"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(occasion["spids_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                ) for occasion in averages["occasion_averages"]]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="occasionAveragesTable"
+                            ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
+                    ),
+                    Card("Gennemsnit per sted",
+                            Table(
+                                Thead(
+                                    Tr(
+                                        Th("Sted", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
+                                    )
+                                ),
+                                Tbody(*[Tr(
+                                    Td(location["place"], style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["result_hit"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["result_shots"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["venstre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["venstre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["hoejre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["hoejre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["bag"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["bag_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["spids"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    Td(str(round(location["spids_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",)
+                                ) for location in averages["location_averages"]]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="locationAveragesTable"
+                            ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
+                    ),
+                    Card("Gennemsnit samlet",
+                            Table(
+                                Thead(
+                                    Tr(
+                                        Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
+                                        Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
+                                    )
+                                ),
+                                Tbody(
+                                    Tr(
+                                        Td(str(round(averages["normal_averages"]["result_hit"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["result_shots"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["venstre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["venstre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["hoejre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["hoejre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["bag"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["bag_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["spids"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                        Td(str(round(averages["normal_averages"]["spids_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
+                                    )                                ), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="overallAveragesTable"
+                            ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
                     ), id="startPage", style="text-align: center; padding: 50px; width: auto; align-items: center; display: flex; flex-direction: column;"
                 )
                 , getFoot())

@@ -1,3 +1,4 @@
 python_fasthtml==0.12.40
 supabase==2.27.3
 python-dotenv==1.2.1
+pandas==3.0.0
