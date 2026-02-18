@@ -2,8 +2,10 @@ import os
 import pandas as pd
 from dotenv import load_dotenv
 from fasthtml.common import *
+from fasthtml.svg import *
 from supabase import create_client
 from hashlib import sha256
+from monsterui.all import *
 
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -11,18 +13,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 SESSION_TOKEN = "jagtskydningsapp_token"
 
-DropDown_Sideduer = range(0,11)
-DropDown_Skud = range(6,15)
+DropDown_Sideduer_default = list(reversed(range(0, 11)))
+DropDown_Skud_default = ['10', '11', '12', '13', '14']
         
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app, rt = fast_app(secret_key="superhemmeligkey")
-
-def getDropDownShots():
-    return [Option(str(i), value=str(i)) for i in DropDown_Skud]
-
-def getDropDownHits():
-    return [Option(str(i), value=str(i)) for i in DropDown_Sideduer.__reversed__()]
+app, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers())
 
 def getShootingData(userId: int = None):
     if userId is None:
@@ -33,6 +29,9 @@ def getShootingData(userId: int = None):
         print(f"Fejl ved hentning af data: {e}")
         return []
     return response.data
+
+def getAnledninger():
+    return ["Vælg anledning", "Træning", "Tavle", "DM", "Femkant", "Grand Prix", "Amtsturnering", "Hold DM", "Andet Konkurrence", "Andet"]
 
 def deleteShootingData(skydning_id: int, userId: int = None):
     try:
@@ -123,15 +122,6 @@ def getUserData(username: str, password: str):
 def hash_password(password: str) -> str:
     return sha256(password.encode()).hexdigest()
 
-def getHead():
-    return Head(
-        Title("Jagtskydningsapp", style="text-align: center; padding: 10px; width: 100%; position: fixed; top: 0;"), id="head", 
-    )
-
-def getFoot():
-    return Footer(
-        P("Udviklet af Rolf Sommer. Ved spørgsmål, kontakt 60125444 eller send mail til rolf3141@gmail.com"), id="footer", class_="footer", style="text-align: center; padding: 10px; width: 100%; position: fixed; bottom: 0;"
-    )
 
 def tilFoejSkydniner(entry):
     return Tr(
@@ -150,238 +140,323 @@ def tilFoejSkydniner(entry):
         Td(str(entry["spids"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
         Td(str(entry["spids_skud"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
         Td(A("Slet", href=f"/sletSkydning/{entry['id']}", style="display: inline-block; margin: 5px; padding: 5px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;"),
-)
+        )
     )
+
+def build_duer_grid(sideduer, skud):
+
+    return Div(
+        Grid(
+            LabelSelect(
+                *Options(*[str(i) for i in sideduer], selected_idx=0),
+                label="Venstreduer",
+                name="skydning_venstre"
+            ),
+            LabelSelect(
+                *Options(*[str(i) for i in sideduer], selected_idx=0),
+                label="Bagduer",
+                name="skydning_bag"
+            ),
+            LabelSelect(
+                *Options(*[str(i) for i in sideduer], selected_idx=0),
+                label="Højreduer",
+                name="skydning_hoejre"
+            ),
+            LabelSelect(
+                *Options(*[str(i) for i in sideduer], selected_idx=0),
+                label="Spidsduer",
+                name="skydning_spids"
+            ),
+
+            LabelSelect(
+                *Options(*[str(i) for i in skud], selected_idx=0),
+                label="Venstre skud",
+                name="skydning_venstre_skud"
+            ),
+            LabelSelect(
+                *Options(*[str(i) for i in skud], selected_idx=0),
+                label="Bag skud",
+                name="skydning_bag_skud"
+            ),
+            LabelSelect(
+                *Options(*[str(i) for i in skud], selected_idx=0),
+                label="Højre skud",
+                name="skydning_hoejre_skud"
+            ),
+            LabelSelect(
+                *Options(*[str(i) for i in skud], selected_idx=0),
+                label="Spids skud",
+                name="skydning_spids_skud"
+            ),
+        ),
+        id="duerContainer"
+    )
+
+def getNavBar():
+    return TabContainer(
+             Li(A("Skydninger"), cls="uk-active", hx_get="/start", hx_target="body", hx_swap="outerHTML"),
+             Li(A("Statistik"), hx_get="/statistik", hx_target="body", hx_swap="outerHTML"), alt=True
+        )
+
+@app.route("/opdaterSkydningType/{skydning_type}")
+def opdaterSkydningType(skydning_type: str):
+    if skydning_type == "40":
+        sideduer = list(reversed(range(0, 11)))
+        skud = ['10', '11', '12', '13', '14']
+    else:
+        sideduer = list(reversed(range(0, 7)))
+        skud = ['6', '7', '8']
+
+    return build_duer_grid(sideduer, skud)
 
 @app.route("/sletSkydning/{skydning_id}")
 def sletSkydning(session, skydning_id: int):
     userId = session.get(SESSION_TOKEN)
     if userId is None:
-        return Html(getHead(),
+        return Container(
                     Body(
                         H1("Fejl"),
                         P("Du skal være logget ind for at slette en skydning."),
                         Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
-                    ), getFoot())
+                    ))
     success = deleteShootingData(skydning_id, userId)
     if not success:
-        return Html(getHead(),
+        return Container(
                     Body(
                         H1("Fejl"),
                         P("Der opstod en fejl ved sletning af skydningen. Prøv igen senere."),
                         Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
-                    ), getFoot())
+                    ))
     return Redirect("/start")
 
 
 @app.route("/")
 def getLogin(session):
-    return Html(getHead(),
-                Body(
-                    H1("Velkommen til Jagtskydningsappen!"),
+    return  Container(   
+                    H1("Velkommen til Jagtskydningsappen!", cls="mb-4 text-3xl font-bold"),
                     P("Du kan oprette nye skydninger og se dine tidligere resultater."),
-                    Form(
-                        Fieldset(
-                        Div(Input(name="brugernavn", type="text", placeholder="Brugernavn", style="padding: 5px; margin: 5px;",)),
-                         Div(Input(name="adgangskode", type="password", placeholder="Adgangskode", style="padding: 5px; margin: 5px;"))
-                         , Button("Log ind", type="submit", style="padding: 5px; margin: 5px;")),
-                             method="post", hx_on__after_request="this.reset()", hx_swap="outerHTML", action="/login"
-                        ), id="loginPage", style="text-align: center; padding: 50px; width: auto;"
-                )
-                , getFoot())
+                    Br(),
+                    Form(cls='space-y-6', hx_post="/login", hx_swap="outerHTML")(
+                        LabelInput(label="Brugernavn", name="brugernavn", type="text", placeholder="Indtast dit brugernavn"),
+                        LabelInput(label="Adgangskode", name="adgangskode", type="password", placeholder="Indtast din adgangskode"),
+                        Button("Log ind", cls=ButtonT.primary, type="submit", hx_post="/login", hx_swap="outerHTML")
+                    )
+            )
 
 @app.route("/login", methods=["POST"])
 def login(session, brugernavn: str, adgangskode: str):
     userResp = getUserData(brugernavn, adgangskode)
     if not userResp:
-        return Html(getHead(),
-                    Body(
+        return Container(
+                    Div(
                         H1("Fejl"),
                         P("Ugyldigt brugernavn eller adgangskode. Prøv igen."),
                         A("Tilbage til login", href="/", style="display: inline-block; margin: 10px; padding: 10px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;"),
-                    ), getFoot())
+                    )
+        )
        
     session[SESSION_TOKEN] = userResp["id"]
     
     return Redirect("/start")
     
+@app.route("/statistik")
+def statistik(session):
+    userId = session.get(SESSION_TOKEN)
+    data = getShootingData(userId=userId)
+    averages = getAverages(data)
+    return Container(
+                    H1("Statistik"),
+                    Br(),
+                    getNavBar(),
+                    Card("Gennemsnit per anledning",
+                         Table(
+                             Thead(
+                                 Tr(
+                                    Th("Anledning"),
+                                    Th("Ramte"),
+                                    Th("Skud"),
+                                    Th("Venstre"),
+                                    Th("Venstre skud"),
+                                    Th("Højre"),
+                                    Th("Højre skud"),
+                                    Th("Bag"),
+                                    Th("Bag skud"),
+                                    Th("Spids"),
+                                    Th("Spids skud")
+                                 )
+                             ),
+                             Tbody(*[Tr(
+                                    Td(occasion["occasion"]),
+                                    Td(str(round(occasion["result_hit"],2))),
+                                    Td(str(round(occasion["result_shots"],2))),
+                                    Td(str(round(occasion["venstre"],2))),
+                                    Td(str(round(occasion["venstre_skud"],2))),
+                                    Td(str(round(occasion["hoejre"],2))),
+                                    Td(str(round(occasion["hoejre_skud"],2))),
+                                    Td(str(round(occasion["bag"],2))),
+                                    Td(str(round(occasion["bag_skud"],2))),
+                                    Td(str(round(occasion["spids"],2))),
+                                    Td(str(round(occasion["spids_skud"],2)))
+                                ) for occasion in averages["occasion_averages"]]), id="occasionAveragesTable"
+                         )
+                    ),
+                    Card("Gennemsnit per sted",
+                            Table(
+                                Thead(
+                                    Tr(
+                                        Th("Sted"),
+                                        Th("Ramte"),
+                                        Th("Skud"),
+                                        Th("Venstre"),
+                                        Th("Venstre skud"),
+                                        Th("Højre"),
+                                        Th("Højre skud"),
+                                        Th("Bag"),
+                                        Th("Bag skud"),
+                                        Th("Spids"),
+                                        Th("Spids skud")
+                                    )
+                                ),
+                                Tbody(*[Tr(
+                                        Td(location["place"]),
+                                        Td(str(round(location["result_hit"],2))),
+                                        Td(str(round(location["result_shots"],2))),
+                                        Td(str(round(location["venstre"],2))),
+                                        Td(str(round(location["venstre_skud"],2))),
+                                        Td(str(round(location["hoejre"],2))),
+                                        Td(str(round(location["hoejre_skud"],2))),
+                                        Td(str(round(location["bag"],2))),
+                                        Td(str(round(location["bag_skud"],2))),
+                                        Td(str(round(location["spids"],2))),
+                                        Td(str(round(location["spids_skud"],2)))
+                                    ) for location in averages["location_averages"]]), id="locationAveragesTable"
+                            )
+                    ),
+                    Card("Gennemsnit samlet",
+                            Table(
+                                Thead(
+                                    Tr(
+                                        Th("Ramte"),
+                                        Th("Skud"),
+                                        Th("Venstre"),
+                                        Th("Venstre skud"),
+                                        Th("Højre"),
+                                        Th("Højre skud"),
+                                        Th("Bag"),
+                                        Th("Bag skud"),
+                                        Th("Spids"),
+                                        Th("Spids skud")
+                                    )
+                                ),
+                                Tbody(
+                                    Tr(
+                                        Td(str(round(averages["normal_averages"]["result_hit"],2))),
+                                        Td(str(round(averages["normal_averages"]["result_shots"],2))),
+                                        Td(str(round(averages["normal_averages"]["venstre"],2))),
+                                        Td(str(round(averages["normal_averages"]["venstre_skud"],2))),
+                                        Td(str(round(averages["normal_averages"]["hoejre"],2))),
+                                        Td(str(round(averages["normal_averages"]["hoejre_skud"],2))),
+                                        Td(str(round(averages["normal_averages"]["bag"],2))),
+                                        Td(str(round(averages["normal_averages"]["bag_skud"],2))),
+                                        Td(str(round(averages["normal_averages"]["spids"],2))),
+                                        Td(str(round(averages["normal_averages"]["spids_skud"],2)))
+                                    )                                
+                                ), id="overallAveragesTable"
+                        ), id="statistikPage"
+                    )
+            )
+                
+                         
+
 
 @app.route("/start")
 def startPage(session):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
     averages = getAverages(data)
-    return Html(getHead(),
-                Body(
+    return Container(
                     H1("Velkommen til Jagtskydningsappen!"),
-                    A("Opret ny skydning", href="/nySkydning", style="display: inline-block; margin: 10px; padding: 10px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;"),
-                    P(),
-                    Card("Skydninger",
+                    Br(),
+                    Button("Opret ny skydning", cls=ButtonT.primary, data_uk_toggle="target: #nySkydning"),
+                    nySkydning(),
+                    Br(),
+                    getNavBar(),
+                    Br(),
+                    Card("Seneste skydninger",
                         Table(
                             Thead(
                                 Tr(
-                                    Th("Sted", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Dato", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Anledning", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("40/24", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                    Th(" ", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
+                                    Th("Sted"),
+                                    Th("Dato"),
+                                    Th("Anledning"),
+                                    Th("40/24"),
+                                    Th("Ramte"),
+                                    Th("Skud"),
+                                    Th("Venstre"),
+                                    Th("Venstre skud"),
+                                    Th("Højre"),
+                                    Th("Højre skud"),
+                                    Th("Bag"),
+                                    Th("Bag skud"),
+                                    Th("Spids"),
+                                    Th("Spids skud"),
+                                    Th(" ")
                                 )
                             ),
-                            Tbody(*[tilFoejSkydniner(entry) for entry in data]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="skydningTable"
-                        ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
-                    ),
-                     Card("Gennemsnit per anledning",
-                            Table(
-                                Thead(
-                                    Tr(
-                                        Th("Anledning", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
-                                    )
-                                ),
-                                Tbody(*[Tr(
-                                    Td(occasion["occasion"], style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["result_hit"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["result_shots"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["venstre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["venstre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["hoejre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["hoejre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["bag"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["bag_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["spids"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(occasion["spids_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                ) for occasion in averages["occasion_averages"]]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="occasionAveragesTable"
-                            ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
-                    ),
-                    Card("Gennemsnit per sted",
-                            Table(
-                                Thead(
-                                    Tr(
-                                        Th("Sted", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
-                                    )
-                                ),
-                                Tbody(*[Tr(
-                                    Td(location["place"], style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["result_hit"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["result_shots"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["venstre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["venstre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["hoejre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["hoejre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["bag"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["bag_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["spids"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    Td(str(round(location["spids_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",)
-                                ) for location in averages["location_averages"]]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="locationAveragesTable"
-                            ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
-                    ),
-                    Card("Gennemsnit samlet",
-                            Table(
-                                Thead(
-                                    Tr(
-                                        Th("Ramte", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Venstre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Venstre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Højre", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Højre skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Bag", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Bag skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Spids", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-                                        Th("Spids skud", style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;")
-                                    )
-                                ),
-                                Tbody(
-                                    Tr(
-                                        Td(str(round(averages["normal_averages"]["result_hit"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["result_shots"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["venstre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["venstre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["hoejre"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["hoejre_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["bag"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["bag_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["spids"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                        Td(str(round(averages["normal_averages"]["spids_skud"],2)), style="width:auto;border-collapse :collapse;border: 1px solid black; padding: 5px;",),
-                                    )                                ), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px; text-align: center;", id="overallAveragesTable"
-                            ), style="margin: 20px; padding: 20px; border: 1px solid black; border-radius: 5px; width auto;"
-                    ), id="startPage", style="text-align: center; padding: 50px; width: auto; align-items: center; display: flex; flex-direction: column;"
+                            Tbody(*[tilFoejSkydniner(entry) for entry in data]), id="skydningTable"
+                        )
+                    )
                 )
-                , getFoot())
 
 
-@app.route("/nySkydning")
-def nySkydning(session):
-    userId = session.get(SESSION_TOKEN)
-    return Html(getHead(),
-                Body(
-                    H1("Opret ny skydning"),
-                    Form(
-                        Fieldset(
-                            Div(Input(name="skydning_sted", type="text", placeholder="Sted", style="padding: 5px; margin: 5px;",)),
-                            Div(Input(name="skydning_dato", type="date", style="padding: 5px; margin: 5px;")),
-                            Div(Select(Option("Træning", value="Træning"), Option("Tavle", value="Tavle"), Option("DM", value="DM"), Option("Femkant", value="Femkant"), Option("Grand Prix", value="Grand Prix"), Option("Amtsturnering", value="Amtsturnering"),
-                                                    Option("Hold DM", value="Hold DM"), Option("Andet Konkurrence", value="Andet Konkurrence"), Option("Andet", value="Andet"),
-                                                    name="skydning_occation", placeholder="Anledning", style="padding: 5px; margin: 5px;",)),
-                            Div(Select(Option(40), Option(24), name="skydning_type", style="padding: 5px; margin: 5px;", placeholder="40/24"), Label("40/24")),
-                            Div(Select(getDropDownHits(),name="skydning_venstre", placeholder="Venstre", style="padding: 5px; margin: 5px;"), Label("Venstre")),
-                            Div(Select(getDropDownShots(),name="skydning_venstre_skud", type="number", placeholder="Venstre skud", style="padding: 5px; margin: 5px;"), Label("Venstre skud")),
-                            Div(Select(getDropDownHits(),name="skydning_hoejre", placeholder="Højre", style="padding: 5px; margin: 5px;"), Label("Højre")),
-                            Div(Select(getDropDownShots(),name="skydning_hoejre_skud", type="number", placeholder="Højre skud", style="padding: 5px; margin: 5px;"), Label("Højre skud")),
-                            Div(Select(getDropDownHits(),name="skydning_bag", placeholder="Bag", style="padding: 5px; margin: 5px;" ), Label("Bag")),
-                            Div(Select(getDropDownShots(),name="skydning_bag_skud", type="number", placeholder="Bag skud", style="padding: 5px; margin: 5px;"), Label("Bag skud")),
-                            Div(Select(getDropDownHits(),name="skydning_spids", placeholder="Spids", style="padding: 5px; margin: 5px;"), Label("Spids")),
-                            Div(Select(getDropDownShots(),name="skydning_spids_skud", type="number", placeholder="Spids skud", style="padding: 5px; margin: 5px;"), Label("Spids skud")),        
-                            Div(Button("Gem skydning", type="submit", style="padding: 5px; margin: 5px;"))
-                        ), method="post", hx_on__after_request="this.reset()", hx_swap="outerHTML", action="/gemSkydning", hx_target="#startPage"
-                    ), id="nySkydningPage", style="text-align: center; padding: 50px; width: auto;"
+def nySkydning():
+    return Modal(
+        Div(cls='p-6')(
+            ModalTitle("Opret ny skydning", cls="mb-4 text-2xl font-bold text-center"),
+            Br(),
+            FormLabel("Runde"), DivLAligned(Radio(name="skydning_type", value="40", checked=True, hx_get="/opdaterSkydningType/40", hx_target="#duerContainer", hx_trigger="change")("40"),
+                                            Radio(name="skydning_type", value="24", hx_get="/opdaterSkydningType/24", hx_target="#duerContainer", hx_trigger="change")("24")), 
+            Br(),
+            Form(cls='space-y-6', hx_post="/gemSkydning", hx_swap="outerHTML")(
+                TextArea(label="Sted", name="skydning_sted", placeholder="Indtast sted for skydning"),
+                LabelInput(label="Dato", name="skydning_dato", type="date"),
+                LabelSelect(
+                    *Options(*[str(i) for i in getAnledninger()], selected_idx=1, disabled_idxs={0}), label="Anledning", name="skydning_occation"
+                ),
+
+                build_duer_grid(DropDown_Sideduer_default, DropDown_Skud_default)
+                ,
+                DivRAligned(
+                    ModalCloseButton("Anuller", cls=ButtonT.ghost),
+                    Button("Gem skydning", cls=ButtonT.primary, type="submit", hx_post="/gemSkydning", hx_swap="outerHTML"), cls='space-x-2'
                 )
-                , getFoot())
+            )
+        ), id="nySkydning", open=False
+    )
 
 @app.route("/gemSkydning", methods=["POST"])
-def gemSkydning(session, skydning_sted: str, skydning_dato: str, skydning_occation: str, skydning_type: str, skydning_venstre: int, skydning_venstre_skud: int, skydning_hoejre: int, skydning_hoejre_skud: int,
+def gemSkydning(session, skydning_sted: str, skydning_dato: str, skydning_occation: str, skydning_venstre: int, skydning_venstre_skud: int, skydning_hoejre: int, skydning_hoejre_skud: int,
                    skydning_bag: int, skydning_bag_skud: int, skydning_spids: int, skydning_spids_skud: int):
     userId = session.get(SESSION_TOKEN)
     skydning_result_hit = skydning_venstre + skydning_hoejre + skydning_bag + skydning_spids
     skydning_result_shots = skydning_venstre_skud + skydning_hoejre_skud + skydning_bag_skud + skydning_spids_skud
+    skydning_type = 40 if skydning_result_hit > 24 else 24
     saved = saveShootingData(skydning_sted, userId, skydning_dato, skydning_occation, int(skydning_type), skydning_result_hit, skydning_result_shots,
                               skydning_venstre, skydning_venstre_skud, skydning_hoejre, skydning_hoejre_skud, skydning_bag, skydning_bag_skud, skydning_spids, skydning_spids_skud)
+    # show a new error modal if saving failed, otherwise redirect to start page
     if not saved:
-        return Html(getHead(),
-                    Body(
-                        H1("Fejl"),
-                        P("Der opstod en fejl ved gemning af skydningen. Prøv igen senere."),
-                        Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
-                    ), getFoot())
+        return Modal(
+            Div(cls='p-6')(
+                ModalTitle("Fejl", cls="mb-4 text-2xl font-bold text-center"),
+                Br(),
+                P("Der opstod en fejl ved gemning af skydningen. Prøv igen senere.", cls="text-center"),
+                Br(),
+                DivRAligned(
+                    ModalCloseButton("Luk", cls=ButtonT.ghost),
+                    Button("Tilbage til start", cls=ButtonT.primary, hx_get="/start", hx_swap="outerHTML"), cls='space-x-2'
+                )
+            ), id="errorModal", open=True
+        )
     return Redirect("/start")
 
 if __name__ == "__main__":
