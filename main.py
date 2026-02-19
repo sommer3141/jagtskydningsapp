@@ -24,7 +24,7 @@ def getShootingData(userId: int = None):
     if userId is None:
         return []
     try:
-        response = supabase.table("skydning").select("*").eq("userId", userId).execute()
+        response = supabase.table("skydning").select("*").eq("userId", userId).order("date", desc=True).execute()
     except Exception as e:
         print(f"Fejl ved hentning af data: {e}")
         return []
@@ -45,6 +45,12 @@ def getAverages(data):
     if not data:
         return {}
     df = pd.DataFrame(data)
+
+    df = df[df['type'] == 40]
+    if df.empty:
+        return {}
+    
+
     occasion_averages = df.groupby("occasion").agg({
         "result_hit": "mean",
         "result_shots": "mean",
@@ -87,6 +93,100 @@ def getAverages(data):
         "normal_averages": normal_averages.to_dict(orient="records")[0]
     }
 
+def getPercentages(data):
+    if not data:
+        return {}
+    df = pd.DataFrame(data)
+    df = df[df['type'] == 40]
+    if df.empty:
+        return {}
+    numberOfEntries = len(df)
+    if numberOfEntries == 0:
+        return {}
+    
+    occasion_percentages = df.groupby("occasion").agg({
+        "result_hit": "sum",
+        "result_shots": "sum",
+        "venstre": "sum",
+        "venstre_skud": "sum",
+        "hoejre": "sum",
+        "hoejre_skud": "sum",
+        "bag": "sum",
+        "bag_skud": "sum",
+        "spids": "sum",
+        "spids_skud": "sum"
+    }).reset_index()
+    location_percentages = df.groupby("place").agg({
+        "result_hit": "sum",
+        "result_shots": "sum",
+        "venstre": "sum",
+        "venstre_skud": "sum",
+        "hoejre": "sum",
+        "hoejre_skud": "sum",
+        "bag": "sum",
+        "bag_skud": "sum",
+        "spids": "sum",
+        "spids_skud": "sum"
+    }).reset_index()
+    normal_percentages = df.agg({
+        "result_hit": "sum",
+        "result_shots": "sum",
+        "venstre": "sum",
+        "venstre_skud": "sum",
+        "hoejre": "sum",
+        "hoejre_skud": "sum",
+        "bag": "sum",
+        "bag_skud": "sum",
+        "spids": "sum",
+        "spids_skud": "sum"
+    }).to_frame().T
+
+    numberOfPossibleHits = numberOfEntries * 40
+    numberOfPossibleSideHits = numberOfEntries * 10
+    occasion_percentages["result_hit"] = occasion_percentages["result_hit"] / numberOfPossibleHits * 100
+    occasion_percentages["venstre"] = occasion_percentages["venstre"] / numberOfPossibleSideHits * 100
+    occasion_percentages["hoejre"] = occasion_percentages["hoejre"] / numberOfPossibleSideHits * 100
+    occasion_percentages["bag"] = occasion_percentages["bag"] / numberOfPossibleSideHits * 100
+    occasion_percentages["spids"] = occasion_percentages["spids"] / numberOfPossibleSideHits * 100
+    location_percentages["result_hit"] = location_percentages["result_hit"] / numberOfPossibleHits * 100
+    location_percentages["venstre"] = location_percentages["venstre"] / numberOfPossibleSideHits * 100
+    location_percentages["hoejre"] = location_percentages["hoejre"] / numberOfPossibleSideHits * 100
+    location_percentages["bag"] = location_percentages["bag"] / numberOfPossibleSideHits * 100
+    location_percentages["spids"] = location_percentages["spids"] / numberOfPossibleSideHits * 100
+    normal_percentages["result_hit"] = normal_percentages["result_hit"] / numberOfPossibleHits * 100
+    normal_percentages["venstre"] = normal_percentages["venstre"] / numberOfPossibleSideHits * 100
+    normal_percentages["hoejre"] = normal_percentages["hoejre"] / numberOfPossibleSideHits * 100
+    normal_percentages["bag"] = normal_percentages["bag"] / numberOfPossibleSideHits * 100
+    normal_percentages["spids"] = normal_percentages["spids"] / numberOfPossibleSideHits * 100
+    return {
+        "occasion_percentages": occasion_percentages.to_dict(orient="records"),
+        "location_percentages": location_percentages.to_dict(orient="records"),
+        "normal_percentages": normal_percentages.to_dict(orient="records")[0]
+    }
+
+def createTable(headers, df, value_keys, delete_key=None, delete_url=None):
+    return Table(cls="border-collapse border border-gray-100 table-auto")(
+        Thead(
+            Tr(*[Th(header, cls="text-left border text-bold") for header in headers])
+        ),
+        Tbody(
+            *[Tr(*[Td(row[key], cls="text-left border") for key in value_keys]) for _, row in df.iterrows()]
+            # add delete button if delete_key and delete_url are provided
+            + ([Tr(Td(A("Slet", href=delete_url + str(row[delete_key])))) for _, row in df.iterrows()] if delete_key and delete_url else [])
+        )
+    )
+
+def calculateTavleScore(data):
+    df = pd.DataFrame(data)
+    df = df[df["occasion"] == "Tavle"].sort_values("result_hit", ascending=False).sort_values("result_shots", ascending=True).head(15)
+    return df["result_hit"].sum(), df["result_shots"].sum()
+
+def getTotalHitsAndShots(data):
+    df = pd.DataFrame(data)
+    totalHits = df["result_hit"].sum()
+    totalShots = df["result_shots"].sum()
+    return totalHits, totalShots
+
 def saveShootingData(place: str, useriD: int, date: str, occation: str, type: int, result_hit: int, result_shot: int, venstre :int, venstre_skud: int, hoejre: int, hoejre_skud: int, bag: int , bag_skud: int, spids: int, spids_skud: int):
     try:
         response = supabase.table("skydning").insert({
@@ -125,22 +225,21 @@ def hash_password(password: str) -> str:
 
 def tilFoejSkydniner(entry):
     return Tr(
-        Td(entry["place"], style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-        Td(entry["date"], style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-        Td(entry["occasion"], style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-        Td(str(entry["type"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-        Td(str(entry["result_hit"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-        Td(str(entry["result_shots"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-        Td(str(entry["venstre"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
-        Td(str(entry["venstre_skud"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
-        Td(str(entry["hoejre"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
-        Td(str(entry["hoejre_skud"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
-        Td(str(entry["bag"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
-        Td(str(entry["bag_skud"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
-        Td(str(entry["spids"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"), 
-        Td(str(entry["spids_skud"]), style="width: auto; border-collapse: collapse; border: 1px solid black; padding: 5px; margin: 5px;"),
-        Td(A("Slet", href=f"/sletSkydning/{entry['id']}", style="display: inline-block; margin: 5px; padding: 5px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;"),
-        )
+        Td(entry["place"], cls="border text-base"),
+        Td(entry["date"], cls="border text-base"),
+        Td(entry["occasion"], cls="border text-base"),
+        Td(str(entry["type"]), cls="border text-base"),
+        Td(str(entry["result_hit"]), cls="border text-base"),
+        Td(str(entry["result_shots"]), cls="border text-base"),
+        Td(str(entry["venstre"]), cls="border text-base"), 
+        Td(str(entry["venstre_skud"]), cls="border text-base"), 
+        Td(str(entry["hoejre"]), cls="border text-base"), 
+        Td(str(entry["hoejre_skud"]), cls="border text-base"), 
+        Td(str(entry["bag"]), cls="border text-base"), 
+        Td(str(entry["bag_skud"]), cls="border text-base"), 
+        Td(str(entry["spids"]), cls="border text-base"), 
+        Td(str(entry["spids_skud"]), cls="border text-base"),
+        Td(A("Slet", href=f"/sletSkydning/{entry['id']}", cls="inline-block m-1 p-1 bg-blue-500 text-white no-underline rounded"), cls="border text-base")
     )
 
 def build_duer_grid(sideduer, skud):
@@ -264,105 +363,46 @@ def statistik(session):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
     averages = getAverages(data)
+    percetages = getPercentages(data)
+    tavleHits, tavleShots = calculateTavleScore(data)
+    totalHits, totalShots = getTotalHitsAndShots(data)
+    resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
+    percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
+    resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
+    percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
     return Container(
                     H1("Statistik"),
                     Br(),
                     getNavBar(),
-                    Card("Gennemsnit per anledning",
-                         Table(
-                             Thead(
-                                 Tr(
-                                    Th("Anledning"),
-                                    Th("Ramte"),
-                                    Th("Skud"),
-                                    Th("Venstre"),
-                                    Th("Venstre skud"),
-                                    Th("Højre"),
-                                    Th("Højre skud"),
-                                    Th("Bag"),
-                                    Th("Bag skud"),
-                                    Th("Spids"),
-                                    Th("Spids skud")
-                                 )
-                             ),
-                             Tbody(*[Tr(
-                                    Td(occasion["occasion"]),
-                                    Td(str(round(occasion["result_hit"],2))),
-                                    Td(str(round(occasion["result_shots"],2))),
-                                    Td(str(round(occasion["venstre"],2))),
-                                    Td(str(round(occasion["venstre_skud"],2))),
-                                    Td(str(round(occasion["hoejre"],2))),
-                                    Td(str(round(occasion["hoejre_skud"],2))),
-                                    Td(str(round(occasion["bag"],2))),
-                                    Td(str(round(occasion["bag_skud"],2))),
-                                    Td(str(round(occasion["spids"],2))),
-                                    Td(str(round(occasion["spids_skud"],2)))
-                                ) for occasion in averages["occasion_averages"]]), id="occasionAveragesTable"
-                         )
+                    Br(),
+                    Grid(
+                        Card(H4(str(round(tavleHits,2)) + "/" + str(round(tavleShots,2))), header=H3("Tavle resultater", cls="text-xl font-bold")),
+                        Card(H4(str(round(totalHits,2)) + "/" + str(round(totalShots,2))), header=H3("Total resultater", cls="text-xl font-bold")),
+                        Card(H4(str(round(totalHits/totalShots*100,2)) + "%"), header=H3("Total %", cls="text-xl font-bold"))
                     ),
-                    Card("Gennemsnit per sted",
-                            Table(
-                                Thead(
-                                    Tr(
-                                        Th("Sted"),
-                                        Th("Ramte"),
-                                        Th("Skud"),
-                                        Th("Venstre"),
-                                        Th("Venstre skud"),
-                                        Th("Højre"),
-                                        Th("Højre skud"),
-                                        Th("Bag"),
-                                        Th("Bag skud"),
-                                        Th("Spids"),
-                                        Th("Spids skud")
-                                    )
-                                ),
-                                Tbody(*[Tr(
-                                        Td(location["place"]),
-                                        Td(str(round(location["result_hit"],2))),
-                                        Td(str(round(location["result_shots"],2))),
-                                        Td(str(round(location["venstre"],2))),
-                                        Td(str(round(location["venstre_skud"],2))),
-                                        Td(str(round(location["hoejre"],2))),
-                                        Td(str(round(location["hoejre_skud"],2))),
-                                        Td(str(round(location["bag"],2))),
-                                        Td(str(round(location["bag_skud"],2))),
-                                        Td(str(round(location["spids"],2))),
-                                        Td(str(round(location["spids_skud"],2)))
-                                    ) for location in averages["location_averages"]]), id="locationAveragesTable"
-                            )
+                    Br(),
+                    Div("Resultater per anledning", cls="divider text-2xl font-bold"),
+                    Card("Gennemsnit per anledning", cls="font-bold text-center")(
+                        createTable(["Anledning"] + resultHeaders, pd.DataFrame(averages["occasion_averages"]), ["occasion"] + resultValueKeys)
                     ),
-                    Card("Gennemsnit samlet",
-                            Table(
-                                Thead(
-                                    Tr(
-                                        Th("Ramte"),
-                                        Th("Skud"),
-                                        Th("Venstre"),
-                                        Th("Venstre skud"),
-                                        Th("Højre"),
-                                        Th("Højre skud"),
-                                        Th("Bag"),
-                                        Th("Bag skud"),
-                                        Th("Spids"),
-                                        Th("Spids skud")
-                                    )
-                                ),
-                                Tbody(
-                                    Tr(
-                                        Td(str(round(averages["normal_averages"]["result_hit"],2))),
-                                        Td(str(round(averages["normal_averages"]["result_shots"],2))),
-                                        Td(str(round(averages["normal_averages"]["venstre"],2))),
-                                        Td(str(round(averages["normal_averages"]["venstre_skud"],2))),
-                                        Td(str(round(averages["normal_averages"]["hoejre"],2))),
-                                        Td(str(round(averages["normal_averages"]["hoejre_skud"],2))),
-                                        Td(str(round(averages["normal_averages"]["bag"],2))),
-                                        Td(str(round(averages["normal_averages"]["bag_skud"],2))),
-                                        Td(str(round(averages["normal_averages"]["spids"],2))),
-                                        Td(str(round(averages["normal_averages"]["spids_skud"],2)))
-                                    )                                
-                                ), id="overallAveragesTable"
-                        ), id="statistikPage"
+                    Card("Procenter per anledning", cls="font-bold text-center")(
+                        createTable(["Anledning"] + percentageHeaders, pd.DataFrame(percetages["occasion_percentages"]), ["occasion"] + percentageValueKeys)
+                    ),
+                    Br(),
+                    Div("Resultater per sted", cls="divider text-2xl font-bold"),
+                    Card("Gennemsnit per sted", cls="font-bold text-center")(
+                            createTable(["Sted"] + resultHeaders, pd.DataFrame(averages["location_averages"]), ["place"] + resultValueKeys)
+                    ),
+                    Card("Procenter per sted", cls="font-bold text-center")(
+                        createTable(["Sted"] + percentageHeaders, pd.DataFrame(percetages["location_percentages"]), ["place"] + percentageValueKeys)
+                    ),
+                    Br(),
+                    Div("Resultater samlet", cls="divider text-2xl font-bold"),
+                    Card("Gennemsnit samlet", cls="font-bold text-center")(
+                            createTable(resultHeaders, pd.DataFrame([averages["normal_averages"]]), resultValueKeys)
+                    ),
+                    Card("Overall procenter", cls="font-bold text-center")(
+                        createTable(percentageHeaders, pd.DataFrame([percetages["normal_percentages"]]), percentageValueKeys)
                     )
             )
                 
@@ -373,7 +413,8 @@ def statistik(session):
 def startPage(session):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
-    averages = getAverages(data)
+    headers = ["Sted", "Dato", "Anledning", "40/24", "Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud", ""]
+    value_keys = ["place", "date", "occasion", "type", "result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
     return Container(
                     H1("Velkommen til Jagtskydningsappen!"),
                     Br(),
@@ -382,25 +423,25 @@ def startPage(session):
                     Br(),
                     getNavBar(),
                     Br(),
-                    Card("Seneste skydninger",
+                    Card("Seneste skydninger", cls="font-bold text-center text-2xl")(
                         Table(
                             Thead(
-                                Tr(
-                                    Th("Sted"),
-                                    Th("Dato"),
-                                    Th("Anledning"),
-                                    Th("40/24"),
-                                    Th("Ramte"),
-                                    Th("Skud"),
-                                    Th("Venstre"),
-                                    Th("Venstre skud"),
-                                    Th("Højre"),
-                                    Th("Højre skud"),
-                                    Th("Bag"),
-                                    Th("Bag skud"),
-                                    Th("Spids"),
-                                    Th("Spids skud"),
-                                    Th(" ")
+                                Tr(cls="font-bold text-left")(
+                                    Th("Sted", cls="text-left border text-lg"),
+                                    Th("Dato", cls="text-left border text-lg"),
+                                    Th("Anledning", cls="text-left border text-lg"),
+                                    Th("40/24", cls="text-left border text-lg"),
+                                    Th("Ramte", cls="text-left border text-lg"),
+                                    Th("Skud", cls="text-left border text-lg"),
+                                    Th("Venstre", cls="text-left border text-lg"),
+                                    Th("Venstre skud", cls="text-left border text-lg"),
+                                    Th("Højre", cls="text-left border text-lg"),
+                                    Th("Højre skud", cls="text-left border text-lg"),
+                                    Th("Bag", cls="text-left border text-lg"),
+                                    Th("Bag skud", cls="text-left border text-lg"),
+                                    Th("Spids", cls="text-left border text-lg"),
+                                    Th("Spids skud", cls="text-left border text-lg"),
+                                    Th(" ", cls="text-left border text-lg")
                                 )
                             ),
                             Tbody(*[tilFoejSkydniner(entry) for entry in data]), id="skydningTable"
