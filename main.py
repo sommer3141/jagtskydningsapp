@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
 from dotenv import load_dotenv
 from fasthtml.common import *
 from fasthtml.svg import *
@@ -18,7 +20,7 @@ DropDown_Skud_default = ['10', '11', '12', '13', '14']
         
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers())
+app, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers(), dark_mode=True)
 
 def getShootingData(userId: int = None):
     if userId is None:
@@ -62,7 +64,7 @@ def getAverages(data):
         "bag_skud": "mean",
         "spids": "mean",
         "spids_skud": "mean"
-    }).reset_index()
+    }).round(2).reset_index()
     location_averages = df.groupby("place").agg({
         "result_hit": "mean",
         "result_shots": "mean",
@@ -74,7 +76,7 @@ def getAverages(data):
         "bag_skud": "mean",
         "spids": "mean",
         "spids_skud": "mean"
-    }).reset_index()
+    }).round(2).reset_index()
     normal_averages = df.agg({
         "result_hit": "mean",
         "result_shots": "mean",
@@ -86,7 +88,7 @@ def getAverages(data):
         "bag_skud": "mean",
         "spids": "mean",
         "spids_skud": "mean"
-    }).to_frame().T
+    }).round(2).to_frame().T
     return {
         "occasion_averages": occasion_averages.to_dict(orient="records"),
         "location_averages": location_averages.to_dict(orient="records"),
@@ -143,26 +145,61 @@ def getPercentages(data):
 
     numberOfPossibleHits = numberOfEntries * 40
     numberOfPossibleSideHits = numberOfEntries * 10
-    occasion_percentages["result_hit"] = occasion_percentages["result_hit"] / numberOfPossibleHits * 100
-    occasion_percentages["venstre"] = occasion_percentages["venstre"] / numberOfPossibleSideHits * 100
-    occasion_percentages["hoejre"] = occasion_percentages["hoejre"] / numberOfPossibleSideHits * 100
-    occasion_percentages["bag"] = occasion_percentages["bag"] / numberOfPossibleSideHits * 100
-    occasion_percentages["spids"] = occasion_percentages["spids"] / numberOfPossibleSideHits * 100
-    location_percentages["result_hit"] = location_percentages["result_hit"] / numberOfPossibleHits * 100
-    location_percentages["venstre"] = location_percentages["venstre"] / numberOfPossibleSideHits * 100
-    location_percentages["hoejre"] = location_percentages["hoejre"] / numberOfPossibleSideHits * 100
-    location_percentages["bag"] = location_percentages["bag"] / numberOfPossibleSideHits * 100
-    location_percentages["spids"] = location_percentages["spids"] / numberOfPossibleSideHits * 100
-    normal_percentages["result_hit"] = normal_percentages["result_hit"] / numberOfPossibleHits * 100
-    normal_percentages["venstre"] = normal_percentages["venstre"] / numberOfPossibleSideHits * 100
-    normal_percentages["hoejre"] = normal_percentages["hoejre"] / numberOfPossibleSideHits * 100
-    normal_percentages["bag"] = normal_percentages["bag"] / numberOfPossibleSideHits * 100
-    normal_percentages["spids"] = normal_percentages["spids"] / numberOfPossibleSideHits * 100
+    occasion_percentages["result_hit"] = (occasion_percentages["result_hit"] / numberOfPossibleHits * 100).round(2)
+    occasion_percentages["venstre"] = (occasion_percentages["venstre"] / numberOfPossibleSideHits * 100).round(2)
+    occasion_percentages["hoejre"] = (occasion_percentages["hoejre"] / numberOfPossibleSideHits * 100).round(2)
+    occasion_percentages["bag"] = (occasion_percentages["bag"] / numberOfPossibleSideHits * 100).round(2)
+    occasion_percentages["spids"] = (occasion_percentages["spids"] / numberOfPossibleSideHits * 100).round(2)
+    location_percentages["result_hit"] = (location_percentages["result_hit"] / numberOfPossibleHits * 100).round(2)
+    location_percentages["venstre"] = (location_percentages["venstre"] / numberOfPossibleSideHits * 100).round(2)
+    location_percentages["hoejre"] = (location_percentages["hoejre"] / numberOfPossibleSideHits * 100).round(2)
+    location_percentages["bag"] = (location_percentages["bag"] / numberOfPossibleSideHits * 100).round(2)
+    location_percentages["spids"] = (location_percentages["spids"] / numberOfPossibleSideHits * 100).round(2)
+    normal_percentages["result_hit"] = (normal_percentages["result_hit"] / numberOfPossibleHits * 100).round(2)
+    normal_percentages["venstre"] = (normal_percentages["venstre"] / numberOfPossibleSideHits * 100).round(2)
+    normal_percentages["hoejre"] = (normal_percentages["hoejre"] / numberOfPossibleSideHits * 100).round(2)
+    normal_percentages["bag"] = (normal_percentages["bag"] / numberOfPossibleSideHits * 100).round(2)
+    normal_percentages["spids"] = (normal_percentages["spids"] / numberOfPossibleSideHits * 100).round(2)
     return {
         "occasion_percentages": occasion_percentages.to_dict(orient="records"),
         "location_percentages": location_percentages.to_dict(orient="records"),
         "normal_percentages": normal_percentages.to_dict(orient="records")[0]
     }
+
+def createFormGraph(data):
+    df = pd.DataFrame(data)
+    df = df[df['type'] == 40]
+    avg = df['result_hit'].mean().round(2) if not df.empty else 0
+    last10 = df.sort_values("date", ascending=False).head(10)
+    last10 = last10[['date', 'result_hit']]
+    #trend
+    x = np.arange(len(last10))
+    y = last10["result_hit"]
+    coef = np.polyfit(x, y, 1)
+    trend = np.poly1d(coef)(x).round(2)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["date"], y=df["result_hit"], mode="markers + lines", name="Resultater", marker=dict(color='LightSkyBlue', size=10)))
+    fig.add_trace(go.Scatter(x=df["date"], y=[avg]*len(df), mode="lines", name="Gennemsnit", line=dict(dash="dash")))
+    fig.add_trace(go.Scatter(x=df["date"], y=trend, mode="lines", name="Trendline", line=dict(dash="dot")))
+
+    fig.update_layout(
+        template="plotly_dark",
+        title="Formkurve – Seneste 10 skydninger",
+        xaxis_title="Dato",
+        yaxis_title="Score"
+    )
+
+    # Export til HTML div
+    graph_html = fig.to_html(full_html=False)
+
+    return Titled("Formkurve",
+        Card(
+            Safe(graph_html),
+            cls="p-6 rounded-2xl shadow-xl"
+        )
+    )
+
 
 def createTable(headers, df, value_keys, delete_key=None, delete_url=None):
     return Table(cls="border-collapse border border-gray-100 table-auto")(
@@ -380,6 +417,8 @@ def statistik(session):
                         Card(H4(str(round(totalHits,2)) + "/" + str(round(totalShots,2))), header=H3("Total resultater", cls="text-xl font-bold")),
                         Card(H4(str(round(totalHits/totalShots*100,2)) + "%"), header=H3("Total %", cls="text-xl font-bold"))
                     ),
+                    Br(),
+                    createFormGraph(data),
                     Br(),
                     Div("Resultater per anledning", cls="divider text-2xl font-bold"),
                     Card("Gennemsnit per anledning", cls="font-bold text-center")(

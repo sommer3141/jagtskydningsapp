@@ -3,3 +3,4 @@ supabase==2.27.3
 python-dotenv==1.2.1
 pandas==3.0.0
 monsterui==1.0.43
+plotly==6.5.2
