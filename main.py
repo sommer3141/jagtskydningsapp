@@ -282,11 +282,11 @@ def saveShootingData(place: str, useriD: int, date: str, occation: str, type: in
         shooting_id = response.data[0]["id"]
         if temp is not None and cloudCover is not None and wind_speed is not None and wind_direction is not None:
             supabase.table("vejr").insert({
-                "skydning_id": shooting_id,
-                "temperature": temp,
-                "cloud_cover": cloudCover,
-                "wind_speed": wind_speed,
-                "wind_direction": wind_direction
+                "skydnings_id": shooting_id,
+                "temp": temp,
+                "skydaekke": cloudCover,
+                "vind": wind_speed,
+                "vind_dir": wind_direction
             }).execute()
     except Exception as e:
         print(f"Fejl ved gemning af data: {e}")
