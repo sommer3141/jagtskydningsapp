@@ -75,6 +75,7 @@ def getAnledninger():
 
 def deleteShootingData(skydning_id: int, userId: int = None):
     try:
+        response = supabase.table("vejr").delete().eq("skydnings_id", skydning_id).execute()
         response = supabase.table("skydning").delete().eq("id", skydning_id).eq("userId", userId).execute()
     except Exception as e:
         print(f"Fejl ved sletning af data: {e}")
