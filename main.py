@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import requests
 from dotenv import load_dotenv
 from fasthtml.common import *
 from fasthtml.svg import *
@@ -22,15 +23,52 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers(), dark_mode=True)
 
+def getSkydebaner():
+    try:
+        response = supabase.from_("skydebaner").select("*").order("name", desc=False).execute()
+    except Exception as e:
+        print(f"Fejl ved hentning af skydebaner: {e}")
+        return []
+    return response.data
+
+## hent skydebaner ved opstart og gem i en global variabel for at undgå unødvendige databasekald
+skydebaner = getSkydebaner()
+
 def getShootingData(userId: int = None):
     if userId is None:
         return []
     try:
-        response = supabase.table("skydning").select("*").eq("userId", userId).order("date", desc=True).execute()
+        response = supabase.from_("skydning") \
+            .select("*, skydebaner(*), vejr(*)") \
+            .eq("userId", userId) \
+            .order("date", desc=True) \
+            .execute()
     except Exception as e:
         print(f"Fejl ved hentning af data: {e}")
         return []
     return response.data
+
+def getweatherData(latitude: float, longitude: float, datetime: str):
+    date = datetime.split("T")[0]
+    hour = datetime.split("T")[1].split(":")[0] if "T" in datetime else "00"
+    try:
+        url = f"https://archive-api.open-meteo.com/v1/archive?latitude={latitude}&longitude={longitude}&start_date={date}&end_date={date}&hourly=temperature_2m,cloud_cover,wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=CET"
+        response = requests.get(url)
+    except Exception as e:
+        print(f"Fejl ved hentning af vejrdata: {e}")
+        return None
+    data = response.json()
+    if "hourly" not in data:
+        print("Ingen vejrdata tilgængelig for denne dato og lokation.")
+        return None
+    for weatherDate in data["hourly"]["time"]:
+            weatherTime = weatherDate.split("T")[1] if "T" in weatherDate else "00:00"
+            weatherHour = weatherTime.split(":")[0]
+            if weatherHour == hour:
+                index = data["hourly"]["time"].index(weatherDate)
+                return data["hourly"]["temperature_2m"][index], data["hourly"]["cloud_cover"][index], data["hourly"]["wind_speed_10m"][index], data["hourly"]["wind_direction_10m"][index]
+    print("Ingen vejrdata fundet for det specifikke tidspunkt.")
+    return None
 
 def getAnledninger():
     return ["Vælg anledning", "Træning", "Tavle", "DM", "Femkant", "Grand Prix", "Amtsturnering", "Hold DM", "Andet Konkurrence", "Andet"]
@@ -43,15 +81,9 @@ def deleteShootingData(skydning_id: int, userId: int = None):
         return False
     return True
 
-def getAverages(data):
-    if not data:
-        return {}
-    df = pd.DataFrame(data)
-
-    df = df[df['type'] == 40]
+def getAverages(df):
     if df.empty:
         return {}
-    
 
     occasion_averages = df.groupby("occasion").agg({
         "result_hit": "mean",
@@ -65,7 +97,8 @@ def getAverages(data):
         "spids": "mean",
         "spids_skud": "mean"
     }).round(2).reset_index()
-    location_averages = df.groupby("place").agg({
+
+    location_averages = df.groupby("skydebaner.name").agg({
         "result_hit": "mean",
         "result_shots": "mean",
         "venstre": "mean",
@@ -95,13 +128,7 @@ def getAverages(data):
         "normal_averages": normal_averages.to_dict(orient="records")[0]
     }
 
-def getPercentages(data):
-    if not data:
-        return {}
-    df = pd.DataFrame(data)
-    df = df[df['type'] == 40]
-    if df.empty:
-        return {}
+def getPercentages(df):
     numberOfEntries = len(df)
     if numberOfEntries == 0:
         return {}
@@ -118,7 +145,7 @@ def getPercentages(data):
         "spids": "sum",
         "spids_skud": "sum"
     }).reset_index()
-    location_percentages = df.groupby("place").agg({
+    location_percentages = df.groupby("skydebaner.name").agg({
         "result_hit": "sum",
         "result_shots": "sum",
         "venstre": "sum",
@@ -213,21 +240,30 @@ def createTable(headers, df, value_keys, delete_key=None, delete_url=None):
         )
     )
 
-def calculateTavleScore(data):
-    df = pd.DataFrame(data)
+def calculateTavleScore(df):
     df = df[df["occasion"] == "Tavle"].sort_values("result_hit", ascending=False).sort_values("result_shots", ascending=True).head(15)
     return df["result_hit"].sum(), df["result_shots"].sum()
 
-def getTotalHitsAndShots(data):
-    df = pd.DataFrame(data)
+def getTotalHitsAndShots(df):
     totalHits = df["result_hit"].sum()
     totalShots = df["result_shots"].sum()
     return totalHits, totalShots
 
+def findSkydebaneInfo(place_name):
+    for skydebane in skydebaner:
+        if skydebane["name"] == place_name:
+            return skydebane["id"], skydebane["latitude"], skydebane["longitude"]
+    return None
+
 def saveShootingData(place: str, useriD: int, date: str, occation: str, type: int, result_hit: int, result_shot: int, venstre :int, venstre_skud: int, hoejre: int, hoejre_skud: int, bag: int , bag_skud: int, spids: int, spids_skud: int):
+    skydebaneId, lat, lon = findSkydebaneInfo(place)
+    if skydebaneId is None:
+        print(f"Skydebane '{place}' ikke fundet i databasen.")
+        return False
+    temp, cloudCover, wind_speed, wind_direction = getweatherData(lat, lon, date) or (None, None, None, None)
     try:
         response = supabase.table("skydning").insert({
-            "place": place,
+            "place_id": skydebaneId,
             "userId": useriD,
             "date": date,
             "occasion": occation,
@@ -243,6 +279,15 @@ def saveShootingData(place: str, useriD: int, date: str, occation: str, type: in
             "spids": spids,
             "spids_skud": spids_skud
         }).execute()
+        shooting_id = response.data[0]["id"]
+        if temp is not None and cloudCover is not None and wind_speed is not None and wind_direction is not None:
+            supabase.table("vejr").insert({
+                "skydning_id": shooting_id,
+                "temperature": temp,
+                "cloud_cover": cloudCover,
+                "wind_speed": wind_speed,
+                "wind_direction": wind_direction
+            }).execute()
     except Exception as e:
         print(f"Fejl ved gemning af data: {e}")
         return False
@@ -262,7 +307,7 @@ def hash_password(password: str) -> str:
 
 def tilFoejSkydniner(entry):
     return Tr(
-        Td(entry["place"], cls="border text-base"),
+        Td(entry["skydebaner"]["name"], cls="border text-base"),
         Td(entry["date"], cls="border text-base"),
         Td(entry["occasion"], cls="border text-base"),
         Td(str(entry["type"]), cls="border text-base"),
@@ -394,15 +439,39 @@ def login(session, brugernavn: str, adgangskode: str):
     session[SESSION_TOKEN] = userResp["id"]
     
     return Redirect("/start")
+
+def getDataframeFromData(data):
+    if not data:
+        return {}
+    df_raw = pd.DataFrame(data)
+    df = df_raw.copy()
+    if df_raw.empty:
+        return {}
+    try:
+        df_skydebaner = pd.json_normalize(df_raw["skydebaner"]).add_prefix("skydebaner.")
+        df = df_raw.drop(columns=["skydebaner"]).join(df_skydebaner)
+    except Exception as e:
+        df.drop(columns=["skydebaner"], inplace=True)
+    
+    try:    
+        df_vejr = pd.json_normalize(df_raw["vejr"]).add_prefix("vejr.")
+        df = pd.concat([df.drop(columns=["vejr"]), df_vejr], axis=1)
+    except Exception as e:
+        df.drop(columns=["vejr"], inplace=True)     
+    
+    df = df[df['type'] == 40]
+    return df
     
 @app.route("/statistik")
 def statistik(session):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
-    averages = getAverages(data)
-    percetages = getPercentages(data)
-    tavleHits, tavleShots = calculateTavleScore(data)
-    totalHits, totalShots = getTotalHitsAndShots(data)
+    df = getDataframeFromData(data)
+    
+    averages = getAverages(df)
+    percetages = getPercentages(df)
+    tavleHits, tavleShots = calculateTavleScore(df)
+    totalHits, totalShots = getTotalHitsAndShots(df)
     resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
     percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
     resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
@@ -430,10 +499,10 @@ def statistik(session):
                     Br(),
                     Div("Resultater per sted", cls="divider text-2xl font-bold"),
                     Card("Gennemsnit per sted", cls="font-bold text-center")(
-                            createTable(["Sted"] + resultHeaders, pd.DataFrame(averages["location_averages"]), ["place"] + resultValueKeys)
+                            createTable(["Sted"] + resultHeaders, pd.DataFrame(averages["location_averages"]), ["skydebaner.name"] + resultValueKeys)
                     ),
                     Card("Procenter per sted", cls="font-bold text-center")(
-                        createTable(["Sted"] + percentageHeaders, pd.DataFrame(percetages["location_percentages"]), ["place"] + percentageValueKeys)
+                        createTable(["Sted"] + percentageHeaders, pd.DataFrame(percetages["location_percentages"]), ["skydebaner.name"] + percentageValueKeys)
                     ),
                     Br(),
                     Div("Resultater samlet", cls="divider text-2xl font-bold"),
@@ -453,7 +522,7 @@ def startPage(session):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
     headers = ["Sted", "Dato", "Anledning", "40/24", "Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud", ""]
-    value_keys = ["place", "date", "occasion", "type", "result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
+    value_keys = ["place_id", "date", "occasion", "type", "result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
     return Container(
                     H1("Velkommen til Jagtskydningsappen!"),
                     Br(),
@@ -498,8 +567,8 @@ def nySkydning():
                                             Radio(name="skydning_type", value="24", hx_get="/opdaterSkydningType/24", hx_target="#duerContainer", hx_trigger="change")("24")), 
             Br(),
             Form(cls='space-y-6', hx_post="/gemSkydning", hx_swap="outerHTML")(
-                TextArea(label="Sted", name="skydning_sted", placeholder="Indtast sted for skydning"),
-                LabelInput(label="Dato", name="skydning_dato", type="date"),
+                LabelSelect(*Options(*[str(skydebane["name"]) for skydebane in skydebaner]), label="Sted", name="skydning_sted"),
+                LabelInput(label="Dato", name="skydning_dato", type="datetime-local"),
                 LabelSelect(
                     *Options(*[str(i) for i in getAnledninger()], selected_idx=1, disabled_idxs={0}), label="Anledning", name="skydning_occation"
                 ),
