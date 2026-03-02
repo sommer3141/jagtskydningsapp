@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 import requests
 from dotenv import load_dotenv
@@ -32,6 +31,39 @@ def AppLayout(*content, title=None):
         )
     )
 
+def translateWeatherCode(code):
+    weather_mapping = {
+        0: "Klar himmel",
+        1: "Hovedsageligt klar himmel",
+        2: "Delvist skyet",
+        3: "Overskyet",
+        45: "Tåge",
+        48: "Tåge med rimfrost",
+        51: "Let regn",
+        53: "Moderat regn",
+        55: "Kraftig regn",
+        56: "Let frysende regn",
+        57: "Kraftig frysende regn",
+        61: "Let regnbyge",
+        63: "Moderat regnbyge",
+        65: "Kraftig regnbyge",
+        66: "Let frysende regnbyge",
+        67: "Kraftig frysende regnbyge",
+        71: "Let snebyge",
+        73: "Moderat snebyge",
+        75: "Kraftig snebyge",
+        77: "Snegryn",
+        80: "Let regnbyge (lokalt)",
+        81: "Moderat regnbyge (lokalt)",
+        82: "Kraftig regnbyge (lokalt)",
+        85: "Let snebyge (lokalt)",
+        86: "Kraftig snebyge (lokalt)",
+        95: "Tordenvejr",
+        96: "Tordenvejr med let  hagl",
+        99: "Tordenvejr med kraftig hagl"
+    }
+    return weather_mapping.get(code, "Ukendt vejr")
+
 def getSkydebaner():
     try:
         response = supabase.from_("skydebaner").select("*").order("name", desc=False).execute()
@@ -53,7 +85,7 @@ def getShootingData(userId: int = None):
         return []
     try:
         response = supabase.from_("skydning") \
-            .select("*, skydebaner(name), vejr(temp, skydaekke, vind, vind_dir)") \
+            .select("*, skydebaner(name), vejr(temp, skydaekke, vind, vind_dir, weather_code)") \
             .eq("userId", userId) \
             .order("date", desc=True) \
             .execute()
@@ -65,7 +97,7 @@ def getShootingData(userId: int = None):
 def getSingleShootingData(skydning_id: int):
     try:
         response = supabase.from_("skydning") \
-            .select("*, skydebaner(name), vejr(temp, skydaekke, vind, vind_dir)") \
+            .select("*, skydebaner(name), vejr(temp, skydaekke, vind, vind_dir, weather_code)") \
             .eq("id", skydning_id) \
             .execute()
     except Exception as e:
@@ -77,7 +109,7 @@ def getweatherData(latitude: float, longitude: float, datetime: str):
     date = datetime.split("T")[0]
     hour = datetime.split("T")[1].split(":")[0] if "T" in datetime else "00"
     try:
-        url = f"https://archive-api.open-meteo.com/v1/archive?latitude={latitude}&longitude={longitude}&start_date={date}&end_date={date}&hourly=temperature_2m,cloud_cover,wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=CET"
+        url = f"https://archive-api.open-meteo.com/v1/archive?latitude={latitude}&longitude={longitude}&start_date={date}&end_date={date}&hourly=temperature_2m,cloud_cover,wind_speed_10m,wind_direction_10m,weather_code&wind_speed_unit=ms&timezone=CET"
         response = requests.get(url)
     except Exception as e:
         print(f"Fejl ved hentning af vejrdata: {e}")
@@ -91,7 +123,7 @@ def getweatherData(latitude: float, longitude: float, datetime: str):
             weatherHour = weatherTime.split(":")[0]
             if weatherHour == hour:
                 index = data["hourly"]["time"].index(weatherDate)
-                return data["hourly"]["temperature_2m"][index], data["hourly"]["cloud_cover"][index], data["hourly"]["wind_speed_10m"][index], data["hourly"]["wind_direction_10m"][index]
+                return data["hourly"]["temperature_2m"][index], data["hourly"]["cloud_cover"][index], data["hourly"]["wind_speed_10m"][index], data["hourly"]["wind_direction_10m"][index], data["hourly"]["weather_code"][index]
     print("Ingen vejrdata fundet for det specifikke tidspunkt.")
     return None
 
@@ -138,15 +170,24 @@ def getPercentagesByWeather(df):
         "bag": "mean",
         "spids": "mean"
     }).reset_index()
+    weather_code_percentages = df.groupby("vejr.weather_code").agg({
+        "result_hit": "mean",
+        "venstre": "mean",
+        "hoejre": "mean",
+        "bag": "mean",
+        "spids": "mean"
+    }).reset_index()
     temp_percentages["vejr.temp"] = temp_percentages["vejr.temp"].apply(lambda x: x.mid.round(2))
     cloud_percentages["vejr.skydaekke"] = cloud_percentages["vejr.skydaekke"].apply(lambda x: x.mid.round(2))
     wind_speed_percentages["vejr.vind"] = wind_speed_percentages["vejr.vind"].apply(lambda x: x.mid.round(2))
     wind_dir_percentages["vejr.vind_dir"] = wind_dir_percentages["vejr.vind_dir"].apply(lambda x: GetWindDirection(x.mid))
+    weather_code_percentages["vejr.weather_code"] = weather_code_percentages["vejr.weather_code"].apply(lambda x: translateWeatherCode(x))
     return {
         "temp_percentages": temp_percentages.to_dict(orient="records"),
         "cloud_percentages": cloud_percentages.to_dict(orient="records"),
         "wind_speed_percentages": wind_speed_percentages.to_dict(orient="records"),
-        "wind_dir_percentages": wind_dir_percentages.to_dict(orient="records")
+        "wind_dir_percentages": wind_dir_percentages.to_dict(orient="records"),
+        "weather_code_percentages": weather_code_percentages.to_dict(orient="records")
     }
     
 
@@ -289,7 +330,7 @@ def createFormGraph(data):
         )
         
 
-def createStatsGraph(dataDict, title, xTitle, yTitle, Total=True):
+def createStatsGraph(dataDict, title, xTitle, yTitle, Total=True, BarPlot=True):
     df = pd.DataFrame(dataDict)
     if Total:
         # only keep the two first colums
@@ -301,7 +342,10 @@ def createStatsGraph(dataDict, title, xTitle, yTitle, Total=True):
 
     fig = go.Figure()
     for column in df.columns[1:]:
-        fig.add_trace(go.Scatter(x=df[df.columns[0]], y=df[column], name=column, mode="markers + lines"))
+        if BarPlot:
+            fig.add_trace(go.Bar(x=df[df.columns[0]], y=df[column], name=column))
+        else:
+            fig.add_trace(go.Scatter(x=df[df.columns[0]], y=df[column], mode="markers + lines", name=column, marker=dict(size=10)))
     fig.update_layout(
         template="plotly_dark",
         title=title,
@@ -329,7 +373,7 @@ def createTable(headers, df, value_keys, delete_key=None, delete_url=None):
     )
 
 def calculateTavleScore(df):
-    df = df[df["occasion"] == "Tavle"].sort_values("result_hit", ascending=False).sort_values("result_shots", ascending=True).head(15)
+    df = df[df["occasion"] == "Tavle"].sort_values(["result_hit", "result_shots"], ascending=[False, True]).head(15)
     return df["result_hit"].sum(), df["result_shots"].sum()
 
 def getTotalHitsAndShots(df):
@@ -348,7 +392,7 @@ def saveShootingData(place: str, useriD: int, date: str, occation: str, type: in
     if skydebaneId is None:
         print(f"Skydebane '{place}' ikke fundet i databasen.")
         return False
-    temp, cloudCover, wind_speed, wind_direction = getweatherData(lat, lon, date) or (None, None, None, None)
+    temp, cloudCover, wind_speed, wind_direction, weather_code = getweatherData(lat, lon, date) or (None, None, None, None, None)
     try:
         response = supabase.table("skydning").insert({
             "place_id": skydebaneId,
@@ -374,7 +418,8 @@ def saveShootingData(place: str, useriD: int, date: str, occation: str, type: in
                 "temp": temp,
                 "skydaekke": cloudCover,
                 "vind": wind_speed,
-                "vind_dir": wind_direction
+                "vind_dir": wind_direction,
+                "weather_code": weather_code
             }).execute()
     except Exception as e:
         print(f"Fejl ved gemning af data: {e}")
@@ -461,11 +506,27 @@ def build_duer_grid(sideduer, skud):
         id="duerContainer"
     )
 
-def getNavBar():
+def getNavBar(active):
     return TabContainer(
-             Li(A("Skydninger"), cls="uk-active", hx_get="/start", hx_target="body", hx_swap="outerHTML"),
-             Li(A("Statistik"), hx_get="/statistik", hx_target="body", hx_swap="outerHTML"), alt=True
+             Li(A("Skydninger"), cls="uk-active" if active == "Skydninger" else "", hx_get="/start", hx_target="body", hx_swap="outerHTML"),
+             Li(A("Statistik"), cls="uk-active" if active == "Statistik" else "", hx_get="/statistik", hx_target="body", hx_swap="outerHTML"), alt=True
         )
+
+def getStatsNavBar(active):
+    def tab(name, label, url):
+        return Li(
+            A(label, href=url),
+            cls="uk-active" if active == name else ""
+        )
+
+    return TabContainer(
+        tab("Samlet", "Samlet", "/statistik"),
+        tab("Anledning", "Anledning", "/statistik/anledning"),
+        tab("Sted", "Sted", "/statistik/sted"),
+        tab("Vejr", "Vejr", "/statistik/vejr"),
+        alt=True
+    )
+
 
 def createStatsList(headers, df, value_keys, label_key=None):
     if df is None or df.empty:
@@ -582,19 +643,23 @@ def statistik(session):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
     df = getDataframeFromData(data)
-    
+
     averages = getAverages(df)
     percetages = getPercentages(df)
+
     tavleHits, tavleShots = calculateTavleScore(df)
     totalHits, totalShots = getTotalHitsAndShots(df)
-    weatherDataPercentages = getPercentagesByWeather(df)
+
     resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
     percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
     resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
     percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
     return AppLayout(
 
-            getNavBar(),
+            getNavBar(active="Statistik"),
+            Br(),
+            getStatsNavBar(active="Samlet"),
+            Br(),
 
             Grid(
                 Card(cls="p-5 rounded-2xl shadow-lg text-center")(
@@ -618,6 +683,36 @@ def statistik(session):
             createFormGraph(data),
 
             Br(),
+            Div("Resultater samlet", cls="divider text-2xl font-bold"),
+            Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
+                createStatsList(resultHeaders, pd.DataFrame([averages["normal_averages"]]), resultValueKeys)
+            ),
+            Card("Overall procenter", cls="font-bold text-center mb-2")(
+                createStatsList(percentageHeaders, pd.DataFrame([percetages["normal_percentages"]]), percentageValueKeys)
+            )
+            ,
+            title="Statistik"
+        )
+
+@app.route("/statistik/anledning")
+def statistikAnledning(session):
+    userId = session.get(SESSION_TOKEN)
+    data = getShootingData(userId=userId)
+    df = getDataframeFromData(data)
+
+    averages = getAverages(df)
+    percetages = getPercentages(df)
+
+    resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
+    percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
+    resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
+    percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
+    return AppLayout(
+            getNavBar(active="Statistik"),
+
+            Br(),
+            getStatsNavBar(active="Anledning"),
+            Br(),
             Div("Resultater per anledning", cls="divider text-2xl font-bold"),
             Card("Gennemsnit per anledning", cls="font-bold text-center mb-2")(
                 createStatsList(resultHeaders, pd.DataFrame(averages["occasion_averages"]), resultValueKeys, label_key="occasion")
@@ -625,6 +720,26 @@ def statistik(session):
             Card("Procenter per anledning", cls="font-bold text-center mb-2")(
                 createStatsList(percentageHeaders, pd.DataFrame(percetages["occasion_percentages"]), percentageValueKeys, label_key="occasion")
             ),
+            title="Statistik"
+        )         
+
+@app.route("/statistik/sted")
+def statistikSted(session):
+    userId = session.get(SESSION_TOKEN)
+    data = getShootingData(userId=userId)
+    df = getDataframeFromData(data)
+
+    averages = getAverages(df)
+    percetages = getPercentages(df)
+
+    resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
+    percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
+    resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
+    percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
+    return AppLayout(
+            getNavBar(active="Statistik"),
+            Br(),
+            getStatsNavBar(active="Sted"),
             Br(),
             Div("Resultater per sted", cls="divider text-2xl font-bold"),
             Card("Gennemsnit per sted", cls="font-bold text-center mb-2")(
@@ -638,23 +753,40 @@ def statistik(session):
             Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
                 createStatsList(resultHeaders, pd.DataFrame([averages["normal_averages"]]), resultValueKeys)
             ),
-            Card("Overall procenter", cls="font-bold text-center mb-2")(
-                createStatsList(percentageHeaders, pd.DataFrame([percetages["normal_percentages"]]), percentageValueKeys)
-            ),
-            Titled("Vejrstatistik",
-                   createStatsGraph(weatherDataPercentages["temp_percentages"], "Samlet resultater baseret på temperatur", "Temperatur (°C)", "Gennemsnitligt antal ramte duer", Total=True),
-                   createStatsGraph(weatherDataPercentages["cloud_percentages"], "Samlet resultater baseret på sky-dække", "Sky-dække (%)", "Gennemsnitligt antal ramte duer", Total=True),
-                   createStatsGraph(weatherDataPercentages["wind_speed_percentages"], "Samlet resultater baseret på vindhastighed", "Vindhastighed (m/s)", "Gennemsnitligt antal ramte duer", Total=True),
-                   createStatsGraph(weatherDataPercentages["wind_dir_percentages"], "Samlet resultater baseret på vindretning", "Vindretning", "Gennemsnitligt antal ramte duer", Total=True),
-                   createStatsGraph(weatherDataPercentages["temp_percentages"], "Sideduer baseret på temperatur", "Temperatur (°C)", "Gennemsnitligt antal ramte side duer", Total=False),
-                   createStatsGraph(weatherDataPercentages["cloud_percentages"], "Sideduer baseret på sky-dække", "Sky-dække (%)", "Gennemsnitligt antal ramte side duer", Total=False),
-                   createStatsGraph(weatherDataPercentages["wind_speed_percentages"], "Sideduer baseret på vindhastighed", "Vindhastighed (m/s)", "Gennemsnitligt antal ramte side duer", Total=False),
-                   createStatsGraph(weatherDataPercentages["wind_dir_percentages"], "Sideduer baseret på vindretning", "Vindretning", "Gennemsnitligt antal ramte side duer", Total=False),
+            title="Statistik"
+        )
+ 
+@app.route("/statistik/vejr")
+def statistikVejr(session):
+    userId = session.get(SESSION_TOKEN)
+    data = getShootingData(userId=userId)
+    df = getDataframeFromData(data)
+
+    weatherDataPercentages = getPercentagesByWeather(df)
+
+    return AppLayout(
+
+            getNavBar(active="Statistik"),
+            Br(),
+            getStatsNavBar(active="Vejr"),
+            Br(),
+            
+            Titled("Vejrstatistik for samlede resultater",
+                   createStatsGraph(weatherDataPercentages["temp_percentages"], "Samlet resultater baseret på temperatur", "Temperatur (°C)", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=False),
+                   createStatsGraph(weatherDataPercentages["cloud_percentages"], "Samlet resultater baseret på sky-dække", "Sky-dække (%)", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=False),
+                   createStatsGraph(weatherDataPercentages["wind_speed_percentages"], "Samlet resultater baseret på vindhastighed", "Vindhastighed (m/s)", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=False),
+                   createStatsGraph(weatherDataPercentages["wind_dir_percentages"], "Samlet resultater baseret på vindretning", "Vindretning", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=True),
+                   createStatsGraph(weatherDataPercentages["weather_code_percentages"], "Samlet resultater baseret på vejr", "Vejr", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=True),cls="mt-10"),
+            Titled("Vejrstatistik for sideduer",
+                   createStatsGraph(weatherDataPercentages["temp_percentages"], "Sideduer baseret på temperatur", "Temperatur (°C)", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=False),
+                   createStatsGraph(weatherDataPercentages["cloud_percentages"], "Sideduer baseret på sky-dække", "Sky-dække (%)", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=False),
+                   createStatsGraph(weatherDataPercentages["wind_speed_percentages"], "Sideduer baseret på vindhastighed", "Vindhastighed (m/s)", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=False),
+                   createStatsGraph(weatherDataPercentages["wind_dir_percentages"], "Sideduer baseret på vindretning", "Vindretning", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=True),
+                   createStatsGraph(weatherDataPercentages["weather_code_percentages"], "Sideduer baseret på vejr", "Vejr", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=True),
                     cls="mt-10"),
             title="Statistik"
         )
 
-                
                          
 
 
@@ -678,7 +810,7 @@ def startPage(session):
 
         nySkydning(),
 
-        getNavBar(),
+        getNavBar(active="Skydninger"),
 
         # Liste i stedet for tabel på mobil
         Div(
@@ -686,7 +818,7 @@ def startPage(session):
                 Card(cls="p-4 rounded-2xl shadow-md hover:shadow-lg transition")(
                     Div(
                         H3(entry["skydebaner"]["name"], cls="font-bold"),
-                        P(entry["date"], cls="text-sm text-gray-400"),
+                        P(str(entry["date"]).replace('T', ' - '), cls="text-sm text-gray-400"),
                         cls="flex justify-between items-center"
                     ),
                     Div(
@@ -711,7 +843,6 @@ def startPage(session):
 @app.route("/visSkydning/{skydning_id}")
 def visSkydning(skydning_id: int):
     data = getSingleShootingData(skydning_id)
-    print(f"Viser data for skydning {skydning_id}: {data}")
     if not data:
         return Div(
             H1("Fejl"),
@@ -790,6 +921,11 @@ def visSkydning(skydning_id: int):
                             P("Retning", cls="text-xs text-gray-400"),
                             P(f"{GetWindDirection(data['vejr']['vind_dir'])} ({data['vejr']['vind_dir']}°)"
                             if data.get("vejr") and data["vejr"].get("vind_dir") is not None else "N/A",
+                            cls="font-semibold")
+                        ),
+                        Div(
+                            P("Vejr", cls="text-xs text-gray-400"),
+                            P(f"{translateWeatherCode(data['vejr']['weather_code'])}" if data.get("vejr") and data["vejr"].get("weather_code") is not None else "N/A",
                             cls="font-semibold")
                         ),
                         cls="grid grid-cols-2 gap-4"
