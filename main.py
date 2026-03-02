@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import plotly.graph_objects as go
 import requests
+import numpy as np
 from dotenv import load_dotenv
 from fasthtml.common import *
 from fasthtml.svg import *
