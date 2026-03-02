@@ -818,7 +818,7 @@ def startPage(session):
                 Card(cls="p-4 rounded-2xl shadow-md hover:shadow-lg transition")(
                     Div(
                         H3(entry["skydebaner"]["name"], cls="font-bold"),
-                        P(str(entry["date"]).replace('T', ' - '), cls="text-sm text-gray-400"),
+                        P(entry["date"], cls="text-sm text-gray-400"),
                         cls="flex justify-between items-center"
                     ),
                     Div(
