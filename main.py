@@ -32,39 +32,6 @@ def AppLayout(*content, title=None):
         )
     )
 
-def translateWeatherCode(code):
-    weather_mapping = {
-        0: "Klar himmel",
-        1: "Hovedsageligt klar himmel",
-        2: "Delvist skyet",
-        3: "Overskyet",
-        45: "Tåge",
-        48: "Tåge med rimfrost",
-        51: "Let regn",
-        53: "Moderat regn",
-        55: "Kraftig regn",
-        56: "Let frysende regn",
-        57: "Kraftig frysende regn",
-        61: "Let regnbyge",
-        63: "Moderat regnbyge",
-        65: "Kraftig regnbyge",
-        66: "Let frysende regnbyge",
-        67: "Kraftig frysende regnbyge",
-        71: "Let snebyge",
-        73: "Moderat snebyge",
-        75: "Kraftig snebyge",
-        77: "Snegryn",
-        80: "Let regnbyge (lokalt)",
-        81: "Moderat regnbyge (lokalt)",
-        82: "Kraftig regnbyge (lokalt)",
-        85: "Let snebyge (lokalt)",
-        86: "Kraftig snebyge (lokalt)",
-        95: "Tordenvejr",
-        96: "Tordenvejr med let  hagl",
-        99: "Tordenvejr med kraftig hagl"
-    }
-    return weather_mapping.get(code, "Ukendt vejr")
-
 def getSkydebaner():
     try:
         response = supabase.from_("skydebaner").select("*").order("name", desc=False).execute()
