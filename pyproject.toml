@@ -1,2 +1,6 @@
 [project]
-requires-python = "~=3.13.0"
+name = "jagtskydningsapp"
+version = "0.1.0"
+description = "Web app til registrering af skyderesultater"
+readme = "README.md"
+requires-python = ">=3.13"
