@@ -585,6 +585,7 @@ def sletSkydning(session, skydning_id: int):
 
 @app.route("/")
 def getLogin(session):
+    print("Henter login side")
     return AppLayout(
 
     Card(cls="p-6 rounded-3xl shadow-xl max-w-md mx-auto")(
