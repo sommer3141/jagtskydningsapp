@@ -25,7 +25,6 @@ app, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers(), dar
 
 def AppLayout(*content, title=None):
     return Container(
-        Script(src="https://cdn.jsdelivr.net/npm/chart.js"),
         Div(
             H1(title, cls="text-2xl md:text-3xl font-bold mb-6") if title else None,
             *content,
