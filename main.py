@@ -1,4 +1,5 @@
 import os
+import uuid
 import pandas as pd
 import plotly.graph_objects as go
 import requests
@@ -24,6 +25,7 @@ app, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers(), dar
 
 def AppLayout(*content, title=None):
     return Container(
+        Script(src="https://cdn.jsdelivr.net/npm/chart.js"),
         Div(
             H1(title, cls="text-2xl md:text-3xl font-bold mb-6") if title else None,
             *content,
@@ -142,35 +144,35 @@ def deleteShootingData(skydning_id: int, userId: int = None):
 def getPercentagesByWeather(df):
     if df.empty:
         return {}
-    temp_percentages = df.groupby(pd.cut(df["vejr.temp"], bins=5)).agg({
+    temp_percentages = df.groupby(pd.cut(df["vejr.temp"], bins=5), observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
         "hoejre": "mean",
         "bag": "mean",
         "spids": "mean"
     }).reset_index()
-    cloud_percentages = df.groupby(pd.cut(df["vejr.skydaekke"], bins=5)).agg({
+    cloud_percentages = df.groupby(pd.cut(df["vejr.skydaekke"], bins=5), observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
         "hoejre": "mean",
         "bag": "mean",
         "spids": "mean"
     }).reset_index()
-    wind_speed_percentages = df.groupby(pd.cut(df["vejr.vind"], bins=3)).agg({
+    wind_speed_percentages = df.groupby(pd.cut(df["vejr.vind"], bins=3), observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
         "hoejre": "mean",
         "bag": "mean",
         "spids": "mean"
     }).reset_index()
-    wind_dir_percentages = df.groupby(pd.cut(df["vejr.vind_dir"], bins=8)).agg({
+    wind_dir_percentages = df.groupby(pd.cut(df["vejr.vind_dir"], bins=8), observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
         "hoejre": "mean",
         "bag": "mean",
         "spids": "mean"
     }).reset_index()
-    weather_code_percentages = df.groupby("vejr.weather_code").agg({
+    weather_code_percentages = df.groupby("vejr.weather_code", observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
         "hoejre": "mean",
@@ -322,7 +324,12 @@ def createFormGraph(data):
     )
 
     # Export til HTML div
-    graph_html = fig.to_html(full_html=False)
+    graph_html = fig.to_html(full_html=False,
+                            include_plotlyjs='cdn',
+                            config={
+                                "displayModeBar": False,
+                                "staticPlot": True
+                    })
 
     return Card(
             Safe(graph_html),
@@ -353,12 +360,18 @@ def createStatsGraph(dataDict, title, xTitle, yTitle, Total=True, BarPlot=True):
         yaxis_title=yTitle
     )
 
-    graph_html = fig.to_html(full_html=False)
-
+    graph_html = fig.to_html(full_html=False,
+                            include_plotlyjs='cdn',
+                            config={
+                                "displayModeBar": False,
+                                "staticPlot": True
+                    })
+    
     return Card(
         Safe(graph_html),
         cls="p-6 rounded-2xl shadow-xl"
     )
+
 
 def createTable(headers, df, value_keys, delete_key=None, delete_url=None):
     return Table(cls="border-collapse border border-gray-100 table-auto")(
@@ -934,13 +947,23 @@ def visSkydning(skydning_id: int):
 
                 Br(),
 
-                DivRAligned(
+                Div(
+                    cls="flex flex-col md:flex-row justify-between space-y-2 md:space-y-0 md:space-x-2"
+                )(
                     Button(
                         "← Tilbage",
                         cls=ButtonT.primary,
                         hx_get="/start",
                         hx_swap="outerHTML",
                         hx_target="body"
+                    ),
+                    Button(
+                        "Slet skydning",
+                        cls=ButtonT.secondary,
+                        hx_get=f"/sletSkydning/{data['id']}",
+                        hx_swap="outerHTML",
+                        hx_target="body",
+                        hx_trigger="click",
                     )
                 ),
 
