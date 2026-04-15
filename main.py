@@ -21,7 +21,7 @@ DropDown_Skud_default = ['10', '11', '12', '13', '14']
         
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers(), dark_mode=True)
+app = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers(), dark_mode=True)
 
 def AppLayout(*content, title=None):
     return Container(
