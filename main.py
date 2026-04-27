@@ -82,6 +82,12 @@ def GetWindDirection(degrees):
     idx = round(degrees / 45) % 8
     return directions[idx]
 
+def getWindDirectionCategory(degrees):
+    if pd.isna(degrees):
+        return None
+    normalized_degrees = float(degrees) % 360
+    return GetWindDirection(normalized_degrees)
+
 def getShootingData(userId: int = None):
     if userId is None:
         return []
@@ -144,6 +150,8 @@ def deleteShootingData(skydning_id: int, userId: int = None):
 def getPercentagesByWeather(df):
     if df.empty:
         return {}
+    weather_df = df.copy()
+    weather_df = weather_df.dropna(subset=["vejr.temp", "vejr.skydaekke", "vejr.vind", "vejr.vind_dir", "vejr.weather_code"], how="all")
     temp_percentages = df.groupby(pd.cut(df["vejr.temp"], bins=5), observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
@@ -165,13 +173,14 @@ def getPercentagesByWeather(df):
         "bag": "mean",
         "spids": "mean"
     }).reset_index()
-    wind_dir_percentages = df.groupby(pd.cut(df["vejr.vind_dir"], bins=8), observed=False).agg({
+    weather_df["vejr.vind_dir_label"] = weather_df["vejr.vind_dir"].apply(getWindDirectionCategory)
+    wind_dir_percentages = weather_df.dropna(subset=["vejr.vind_dir_label"]).groupby("vejr.vind_dir_label", observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
         "hoejre": "mean",
         "bag": "mean",
         "spids": "mean"
-    }).reset_index()
+    }).reindex(["N", "NØ", "Ø", "SØ", "S", "SV", "V", "NV"]).dropna(how="all").reset_index()
     weather_code_percentages = df.groupby("vejr.weather_code", observed=False).agg({
         "result_hit": "mean",
         "venstre": "mean",
@@ -182,7 +191,7 @@ def getPercentagesByWeather(df):
     temp_percentages["vejr.temp"] = temp_percentages["vejr.temp"].apply(lambda x: x.mid.round(2))
     cloud_percentages["vejr.skydaekke"] = cloud_percentages["vejr.skydaekke"].apply(lambda x: x.mid.round(2))
     wind_speed_percentages["vejr.vind"] = wind_speed_percentages["vejr.vind"].apply(lambda x: x.mid.round(2))
-    wind_dir_percentages["vejr.vind_dir"] = wind_dir_percentages["vejr.vind_dir"].apply(lambda x: GetWindDirection(x.mid))
+    wind_dir_percentages = wind_dir_percentages.rename(columns={"vejr.vind_dir_label": "vejr.vind_dir"})
     weather_code_percentages["vejr.weather_code"] = weather_code_percentages["vejr.weather_code"].apply(lambda x: translateWeatherCode(x))
     return {
         "temp_percentages": temp_percentages.to_dict(orient="records"),
