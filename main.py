@@ -27,6 +27,10 @@ app = entry # entry point in vercel
 def AppLayout(*content, title=None):
     return Container(
         Div(
+            Style("""
+                .htmx-indicator { display: none; }
+                .htmx-request .htmx-indicator { display: inline-block; }
+            """),
             H1(title, cls="text-2xl md:text-3xl font-bold mb-6") if title else None,
             *content,
             cls="max-w-5xl mx-auto px-4 py-6 space-y-6"
@@ -101,6 +105,22 @@ def getShootingData(userId: int = None):
         print(f"Fejl ved hentning af data: {e}")
         return []
     return response.data
+
+def getShootingData24Duer(userId: int = None):
+    if userId is None:
+        return []
+    try:
+        response = supabase.from_("skydning") \
+            .select("*, skydebaner(name), vejr(temp, skydaekke, vind, vind_dir, weather_code)") \
+            .eq("userId", userId) \
+            .eq("type", 24) \
+            .order("date", desc=True) \
+            .execute()
+    except Exception as e:
+        print(f"Fejl ved hentning af data: {e}")
+        return []
+    return response.data
+
 
 def getSingleShootingData(skydning_id: int):
     try:
@@ -249,7 +269,7 @@ def getAverages(df):
         "normal_averages": normal_averages.to_dict(orient="records")[0]
     }
 
-def getPercentages(df):
+def getPercentages(df, type=40):
     numberOfEntries = len(df)
     if numberOfEntries == 0:
         return {}
@@ -291,7 +311,7 @@ def getPercentages(df):
         "spids_skud": "sum"
     }).to_frame().T
 
-    numberOfPossibleHits = numberOfEntries * 40
+    numberOfPossibleHits = numberOfEntries * type
     numberOfPossibleSideHits = numberOfEntries * 10
     occasion_percentages["result_hit"] = (occasion_percentages["result_hit"] / numberOfPossibleHits * 100).round(2)
     occasion_percentages["venstre"] = (occasion_percentages["venstre"] / numberOfPossibleSideHits * 100).round(2)
@@ -546,6 +566,7 @@ def getStatsNavBar(active):
         tab("Anledning", "Anledning", "/statistik/anledning"),
         tab("Sted", "Sted", "/statistik/sted"),
         tab("Vejr", "Vejr", "/statistik/vejr"),
+        tab("24 duer", "24 duer", "/statistik/24duer"),
         alt=True
     )
 
@@ -638,7 +659,7 @@ def login(session, brugernavn: str, adgangskode: str):
     
     return Redirect("/start")
 
-def getDataframeFromData(data):
+def getDataframeFromData(data, filter_type=40):
     if not data:
         return {}
     df_raw = pd.DataFrame(data)
@@ -657,62 +678,36 @@ def getDataframeFromData(data):
     except Exception as e:
         df.drop(columns=["vejr"], inplace=True)     
     
-    df = df[df['type'] == 40]
+    df = df[df['type'] == filter_type]
     return df
-    
-@app.route("/statistik")
-def statistik(session):
+ 
+@app.route("/statistik/24duer")
+def statistik24duer(session):
     userId = session.get(SESSION_TOKEN)
-    data = getShootingData(userId=userId)
-    df = getDataframeFromData(data)
+    print(f"User ID for statistik/24duer: {userId}")
+    data = getShootingData24Duer(userId=userId)
+    df = getDataframeFromData(data, filter_type=24)
 
-    averages = getAverages(df)
-    percetages = getPercentages(df)
-
-    tavleHits, tavleShots = calculateTavleScore(df)
-    totalHits, totalShots = getTotalHitsAndShots(df)
+    percentages_24duer = getPercentages(df, type=24)
+    averages_24duer = getAverages(df)
 
     resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
     percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
     resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
     percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
+ 
     return AppLayout(
-
             getNavBar(active="Statistik"),
             Br(),
-            getStatsNavBar(active="Samlet"),
-            Br(),
-
-            Grid(
-                Card(cls="p-5 rounded-2xl shadow-lg text-center")(
-                    P("Tavle", cls="text-gray-400"),
-                    H2(f"{round(tavleHits,2)} / {round(tavleShots,2)}",
-                    cls="text-2xl font-bold")
-                ),
-                Card(cls="p-5 rounded-2xl shadow-lg text-center")(
-                    P("Total", cls="text-gray-400"),
-                    H2(f"{round(totalHits,2)} / {round(totalShots,2)}",
-                    cls="text-2xl font-bold")
-                ),
-                Card(cls="p-5 rounded-2xl shadow-lg text-center bg-blue-600 text-white")(
-                    P("Total %", cls="text-blue-100"),
-                    H2(f"{round(totalHits/totalShots*100,2)}%",
-                    cls="text-3xl font-bold")
-                ),
-                cls="grid grid-cols-1 md:grid-cols-3 gap-4"
-            ),
-
-            createFormGraph(data),
-
+            getStatsNavBar(active="24 duer"),
             Br(),
             Div("Resultater samlet", cls="divider text-2xl font-bold"),
             Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
-                createStatsList(resultHeaders, pd.DataFrame([averages["normal_averages"]]), resultValueKeys)
+                createStatsList(resultHeaders, pd.DataFrame([averages_24duer["normal_averages"]]), resultValueKeys)
             ),
             Card("Overall procenter", cls="font-bold text-center mb-2")(
-                createStatsList(percentageHeaders, pd.DataFrame([percetages["normal_percentages"]]), percentageValueKeys)
-            )
-            ,
+                createStatsList(percentageHeaders, pd.DataFrame([percentages_24duer["normal_percentages"]]), percentageValueKeys)
+            ),
             title="Statistik"
         )
 
@@ -808,8 +803,62 @@ def statistikVejr(session):
                     cls="mt-10"),
             title="Statistik"
         )
+    
+@app.route("/statistik")
+def statistik(session):
+    userId = session.get(SESSION_TOKEN)
+    data = getShootingData(userId=userId)
+    df = getDataframeFromData(data)
 
-                         
+    averages = getAverages(df)
+    percetages = getPercentages(df)
+
+    tavleHits, tavleShots = calculateTavleScore(df)
+    totalHits, totalShots = getTotalHitsAndShots(df)
+
+    resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
+    percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
+    resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
+    percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
+    return AppLayout(
+
+            getNavBar(active="Statistik"),
+            Br(),
+            getStatsNavBar(active="Samlet"),
+            Br(),
+
+            Grid(
+                Card(cls="p-5 rounded-2xl shadow-lg text-center")(
+                    P("Tavle", cls="text-gray-400"),
+                    H2(f"{round(tavleHits,2)} / {round(tavleShots,2)}",
+                    cls="text-2xl font-bold")
+                ),
+                Card(cls="p-5 rounded-2xl shadow-lg text-center")(
+                    P("Total", cls="text-gray-400"),
+                    H2(f"{round(totalHits,2)} / {round(totalShots,2)}",
+                    cls="text-2xl font-bold")
+                ),
+                Card(cls="p-5 rounded-2xl shadow-lg text-center bg-blue-600 text-white")(
+                    P("Total %", cls="text-blue-100"),
+                    H2(f"{round(totalHits/totalShots*100,2)}%",
+                    cls="text-3xl font-bold")
+                ),
+                cls="grid grid-cols-1 md:grid-cols-3 gap-4"
+            ),
+
+            createFormGraph(data),
+
+            Br(),
+            Div("Resultater samlet", cls="divider text-2xl font-bold"),
+            Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
+                createStatsList(resultHeaders, pd.DataFrame([averages["normal_averages"]]), resultValueKeys)
+            ),
+            Card("Overall procenter", cls="font-bold text-center mb-2")(
+                createStatsList(percentageHeaders, pd.DataFrame([percetages["normal_percentages"]]), percentageValueKeys)
+            )
+            ,
+            title="Statistik"
+        )
 
 
 @app.route("/start")
@@ -999,7 +1048,14 @@ def nySkydning():
                 ,
                 DivRAligned(
                     ModalCloseButton("Anuller", cls=ButtonT.ghost),
-                    Button("Gem skydning", cls=ButtonT.primary, type="submit", hx_post="/gemSkydning", hx_swap="outerHTML"), cls='space-x-2'
+                    Button(
+                        "Gem skydning",
+                        Span(id="gemSkydningSpinner", cls="htmx-indicator inline-block h-4 w-4 ml-2 animate-spin rounded-full border-2 border-white border-t-transparent align-middle"),
+                        cls=ButtonT.primary,
+                        type="submit",
+                        hx_post="/gemSkydning",
+                        hx_swap="outerHTML"
+                    ), cls='space-x-2'
                 )
             )
         ), id="nySkydning", open=False
