@@ -688,13 +688,10 @@ def statistik24duer(session):
     data = getShootingData24Duer(userId=userId)
     df = getDataframeFromData(data, filter_type=24)
 
-    percentages_24duer = getPercentages(df, type=24)
     averages_24duer = getAverages(df)
 
     resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
-    percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
     resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
-    percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
  
     return AppLayout(
             getNavBar(active="Statistik"),
@@ -704,9 +701,6 @@ def statistik24duer(session):
             Div("Resultater samlet", cls="divider text-2xl font-bold"),
             Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
                 createStatsList(resultHeaders, pd.DataFrame([averages_24duer["normal_averages"]]), resultValueKeys)
-            ),
-            Card("Overall procenter", cls="font-bold text-center mb-2")(
-                createStatsList(percentageHeaders, pd.DataFrame([percentages_24duer["normal_percentages"]]), percentageValueKeys)
             ),
             title="Statistik"
         )
