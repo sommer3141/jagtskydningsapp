@@ -553,19 +553,19 @@ def build_duer_grid(sideduer, skud):
 
     def row(side_key, label):
         return Tr(
-            Th(label, cls="text-left p-2 align-middle"),
+            Th(label, cls="text-left p-1 sm:p-2 align-middle text-xs sm:text-sm w-12 sm:w-24 whitespace-nowrap"),
             *[
                 Td(
                     Button(
                         "1",
                         type="button",
-                        cls=("duer-cell w-full h-10 rounded border text-lg font-bold " + ("border-blue-500 bg-blue-900/30" if col_idx in double_columns else "border-gray-600")),
+                        cls=("duer-cell w-7 h-8 sm:w-full sm:h-10 rounded border text-xs sm:text-lg font-bold " + ("border-blue-500 bg-blue-900/30" if col_idx in double_columns else "border-gray-600")),
                         data_side=side_key,
                         data_is_double="1" if col_idx in double_columns else "0",
                         data_state="1",
                         onclick="cycleDuerCell(this)"
                     ),
-                    cls="p-1 text-center align-middle w-10"
+                    cls="p-0.5 sm:p-1 text-center align-middle w-7 sm:w-10"
                 )
                 for col_idx in range(columns)
             ],
@@ -579,12 +579,12 @@ def build_duer_grid(sideduer, skud):
         Div("Duer", cls="font-semibold text-sm mb-2"),
         Div("Single: 1, 1', 0, 0' | Double (markeret, 2 felter): 1, 0", cls="text-xs text-gray-400"),
         Input(type="hidden", id="skydning_cell_states", name="skydning_cell_states", value=""),
-        Div(cls="overflow-x-auto")(
+        Div(cls="w-full")(
             Table(cls="table table-sm table-fixed w-full border border-gray-700 rounded-xl")(
                 Thead(
                     Tr(
-                        Th("Side", cls="text-left p-2 w-24"),
-                        *[Th(str(i + 1), cls=("text-center p-2 w-10 " + ("text-blue-300" if i in double_columns else ""))) for i in range(columns)]
+                        Th("Side", cls="text-left p-1 sm:p-2 w-12 sm:w-24 text-xs sm:text-sm"),
+                        *[Th(str(i + 1), cls=("text-center p-0.5 sm:p-2 w-7 sm:w-10 text-xs sm:text-sm " + ("text-blue-300" if i in double_columns else ""))) for i in range(columns)]
                     )
                 ),
                 Tbody(*[row(side_key, label) for side_key, label in side_rows])
@@ -932,7 +932,7 @@ def getMissAnalysis(data):
     misses = {3, 4}
     extra_shot_states = {2, 4}
     singles = {}
-    doubles = {}
+    problem_cells = {}
 
     sorted_data = sorted(data or [], key=lambda entry: entry.get("date", ""))
     for entry in sorted_data:
@@ -958,6 +958,23 @@ def getMissAnalysis(data):
         for side in side_order:
             entries = side_entries[side]
 
+            for col_idx, state in enumerate(entries):
+                key = (side, col_idx + 1)
+                if key not in problem_cells:
+                    problem_cells[key] = {
+                        "side": side,
+                        "side_label": side_labels[side],
+                        "col_start": col_idx + 1,
+                        "col_end": None,
+                        "columns": columns,
+                        "misses": 0,
+                        "attempts": 0
+                    }
+                problem_cells[key]["columns"] = max(problem_cells[key]["columns"], columns)
+                problem_cells[key]["attempts"] += 1
+                if state in misses:
+                    problem_cells[key]["misses"] += 1
+
             for col_idx in single_columns:
                 key = (side, col_idx + 1)
                 if key not in singles:
@@ -977,23 +994,6 @@ def getMissAnalysis(data):
                     singles[key]["misses"] += 1
                 if entries[col_idx] in extra_shot_states:
                     singles[key]["extra_shots"] += 1
-
-            for left, right in double_pairs:
-                key = (side, left + 1, right + 1)
-                if key not in doubles:
-                    doubles[key] = {
-                        "side": side,
-                        "side_label": side_labels[side],
-                        "col_start": left + 1,
-                        "col_end": right + 1,
-                        "columns": columns,
-                        "misses": 0,
-                        "attempts": 0
-                    }
-                doubles[key]["columns"] = max(doubles[key]["columns"], columns)
-                doubles[key]["attempts"] += 1
-                if entries[left] in misses or entries[right] in misses:
-                    doubles[key]["misses"] += 1
 
     singles_rows = []
     for row in singles.values():
@@ -1015,12 +1015,12 @@ def getMissAnalysis(data):
             "attempts": attempts
         })
 
-    doubles_rows = []
-    for row in doubles.values():
+    problem_rows = []
+    for row in problem_cells.values():
         attempts = row["attempts"]
         misses_count = row["misses"]
         miss_rate = round((misses_count / attempts) * 100, 2) if attempts else 0
-        doubles_rows.append({
+        problem_rows.append({
             "side": row["side"],
             "side_label": row["side_label"],
             "col_start": row["col_start"],
@@ -1033,11 +1033,11 @@ def getMissAnalysis(data):
 
     singles_rows = sorted(singles_rows, key=lambda row: (row["miss_rate"], row["misses"], row["attempts"]), reverse=True)
     extra_singles_rows = sorted(singles_rows, key=lambda row: (row["extra_shot_rate"], row["extra_shots"], row["attempts"]), reverse=True)
-    doubles_rows = sorted(doubles_rows, key=lambda row: (row["miss_rate"], row["misses"], row["attempts"]), reverse=True)
+    problem_rows = sorted(problem_rows, key=lambda row: (row["miss_rate"], row["misses"], row["attempts"]), reverse=True)
 
     return {
         "singles": singles_rows,
-        "doubles": doubles_rows,
+        "problem_cells": problem_rows,
         "extra_singles": extra_singles_rows
     }
 
@@ -1058,7 +1058,7 @@ def renderMissPatternRow(row):
                     "",
                     cls=(
                         "inline-block w-7 h-7 rounded border "
-                        + ("border-red-300 bg-red-600" if col_idx in highlight_columns else ("border-blue-500 bg-blue-900/20" if col_idx in double_columns else "border-gray-600"))
+                        + ("border-red-300 bg-red-600" if col_idx in highlight_columns else ("border-green-200" if col_idx in double_columns else "border-green-500"))
                     )
                 )
                 for col_idx in range(columns)
@@ -1381,19 +1381,8 @@ def statistikMiss(session, year: str = None):
         selected_year = None
 
     miss_data = getMissAnalysis(data)
-    troublesome_rows = sorted(
-        miss_data["singles"] + miss_data["doubles"],
-        key=lambda row: (row["miss_rate"], row["misses"], row["attempts"]),
-        reverse=True
-    )[:5]
-    troublesome_rows = [
-        {
-            **row,
-            "col_end": None
-        }
-        for row in troublesome_rows
-    ]
-    extra_singles_rows = miss_data["extra_singles"][:5]
+    troublesome_rows = [row for row in miss_data["problem_cells"] if row["misses"] > 0][:5]
+    extra_singles_rows = [row for row in miss_data["extra_singles"] if row["extra_shots"] > 0][:5]
 
     return AppLayout(
             getNavBar(active="Statistik"),
