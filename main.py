@@ -1,5 +1,6 @@
 import os
 import uuid
+import json
 import pandas as pd
 import plotly.graph_objects as go
 import requests
@@ -16,7 +17,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 SESSION_TOKEN = "jagtskydningsapp_token"
 
-DropDown_Sideduer_default = list(reversed(range(0, 11)))
+DropDown_Sideduer_default = list(reversed(range(1, 11)))
 DropDown_Skud_default = ['10', '11', '12', '13', '14']
         
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -105,6 +106,23 @@ def getShootingData(userId: int = None):
         print(f"Fejl ved hentning af data: {e}")
         return []
     return response.data
+
+def getDistinctShoortingYears(userId: int = None):
+    if userId is None:
+        return []
+    try:
+        response = supabase.from_("skydning") \
+            .select("date") \
+            .eq("userId", userId) \
+            .execute()
+    except Exception as e:
+        print(f"Fejl ved hentning af data: {e}")
+        return []
+    years = set()
+    for entry in response.data:
+        year = entry["date"].split("-")[0]
+        years.add(year)
+    return sorted(list(years), reverse=True)
 
 def getShootingData24Duer(userId: int = None):
     if userId is None:
@@ -311,23 +329,24 @@ def getPercentages(df, type=40):
         "spids_skud": "sum"
     }).to_frame().T
 
-    numberOfPossibleHits = numberOfEntries * type
-    numberOfPossibleSideHits = numberOfEntries * 10
-    occasion_percentages["result_hit"] = (occasion_percentages["result_hit"] / numberOfPossibleHits * 100).round(2)
-    occasion_percentages["venstre"] = (occasion_percentages["venstre"] / numberOfPossibleSideHits * 100).round(2)
-    occasion_percentages["hoejre"] = (occasion_percentages["hoejre"] / numberOfPossibleSideHits * 100).round(2)
-    occasion_percentages["bag"] = (occasion_percentages["bag"] / numberOfPossibleSideHits * 100).round(2)
-    occasion_percentages["spids"] = (occasion_percentages["spids"] / numberOfPossibleSideHits * 100).round(2)
-    location_percentages["result_hit"] = (location_percentages["result_hit"] / numberOfPossibleHits * 100).round(2)
-    location_percentages["venstre"] = (location_percentages["venstre"] / numberOfPossibleSideHits * 100).round(2)
-    location_percentages["hoejre"] = (location_percentages["hoejre"] / numberOfPossibleSideHits * 100).round(2)
-    location_percentages["bag"] = (location_percentages["bag"] / numberOfPossibleSideHits * 100).round(2)
-    location_percentages["spids"] = (location_percentages["spids"] / numberOfPossibleSideHits * 100).round(2)
-    normal_percentages["result_hit"] = (normal_percentages["result_hit"] / numberOfPossibleHits * 100).round(2)
-    normal_percentages["venstre"] = (normal_percentages["venstre"] / numberOfPossibleSideHits * 100).round(2)
-    normal_percentages["hoejre"] = (normal_percentages["hoejre"] / numberOfPossibleSideHits * 100).round(2)
-    normal_percentages["bag"] = (normal_percentages["bag"] / numberOfPossibleSideHits * 100).round(2)
-    normal_percentages["spids"] = (normal_percentages["spids"] / numberOfPossibleSideHits * 100).round(2)
+    def percent_by_shots(frame):
+        frame = frame.copy()
+        result_shots_safe = frame["result_shots"].replace(0, pd.NA)
+        venstre_shots_safe = frame["venstre_skud"].replace(0, pd.NA)
+        hoejre_shots_safe = frame["hoejre_skud"].replace(0, pd.NA)
+        bag_shots_safe = frame["bag_skud"].replace(0, pd.NA)
+        spids_shots_safe = frame["spids_skud"].replace(0, pd.NA)
+
+        frame["result_hit"] = (frame["result_hit"] / result_shots_safe * 100).round(2).fillna(0)
+        frame["venstre"] = (frame["venstre"] / venstre_shots_safe * 100).round(2).fillna(0)
+        frame["hoejre"] = (frame["hoejre"] / hoejre_shots_safe * 100).round(2).fillna(0)
+        frame["bag"] = (frame["bag"] / bag_shots_safe * 100).round(2).fillna(0)
+        frame["spids"] = (frame["spids"] / spids_shots_safe * 100).round(2).fillna(0)
+        return frame
+
+    occasion_percentages = percent_by_shots(occasion_percentages)
+    location_percentages = percent_by_shots(location_percentages)
+    normal_percentages = percent_by_shots(normal_percentages)
     return {
         "occasion_percentages": occasion_percentages.to_dict(orient="records"),
         "location_percentages": location_percentages.to_dict(orient="records"),
@@ -429,30 +448,53 @@ def findSkydebaneInfo(place_name):
             return skydebane["id"], skydebane["latitude"], skydebane["longitude"]
     return None
 
-def saveShootingData(place: str, useriD: int, date: str, occation: str, type: int, result_hit: int, result_shot: int, venstre :int, venstre_skud: int, hoejre: int, hoejre_skud: int, bag: int , bag_skud: int, spids: int, spids_skud: int):
+def saveShootingData(place: str, useriD: int, date: str, occation: str, type: int, result_hit: int, result_shot: int, venstre :int, venstre_skud: int, hoejre: int, hoejre_skud: int, bag: int , bag_skud: int, spids: int, spids_skud: int, cell_states: str = "", venstre_cells=None, bag_cells=None, hoejre_cells=None, spids_cells=None):
     skydebaneId, lat, lon = findSkydebaneInfo(place)
     if skydebaneId is None:
         print(f"Skydebane '{place}' ikke fundet i databasen.")
         return False
     temp, cloudCover, wind_speed, wind_direction, weather_code = getweatherData(lat, lon, date) or (None, None, None, None, None)
+    payload = {
+        "place_id": skydebaneId,
+        "userId": useriD,
+        "date": date,
+        "occasion": occation,
+        "type": type,
+        "result_hit": result_hit,
+        "result_shots": result_shot,
+        "venstre": venstre,
+        "venstre_skud": venstre_skud,
+        "hoejre": hoejre,
+        "hoejre_skud": hoejre_skud,
+        "bag": bag,
+        "bag_skud": bag_skud,
+        "spids": spids,
+        "spids_skud": spids_skud
+    }
+    if cell_states:
+        payload["cell_states"] = cell_states
+    if venstre_cells is not None:
+        payload["venstre_cells"] = venstre_cells
+    if bag_cells is not None:
+        payload["bag_cells"] = bag_cells
+    if hoejre_cells is not None:
+        payload["hoejre_cells"] = hoejre_cells
+    if spids_cells is not None:
+        payload["spids_cells"] = spids_cells
     try:
-        response = supabase.table("skydning").insert({
-            "place_id": skydebaneId,
-            "userId": useriD,
-            "date": date,
-            "occasion": occation,
-            "type": type,
-            "result_hit": result_hit,
-            "result_shots": result_shot,
-            "venstre": venstre,
-            "venstre_skud": venstre_skud,
-            "hoejre": hoejre,
-            "hoejre_skud": hoejre_skud,
-            "bag": bag,
-            "bag_skud": bag_skud,
-            "spids": spids,
-            "spids_skud": spids_skud
-        }).execute()
+        response = supabase.table("skydning").insert(payload).execute()
+    except Exception as e:
+        if cell_states and "cell_states" in payload:
+            try:
+                payload.pop("cell_states")
+                response = supabase.table("skydning").insert(payload).execute()
+            except Exception as fallback_error:
+                print(f"Fejl ved gemning af data: {fallback_error}")
+                return False
+        else:
+            print(f"Fejl ved gemning af data: {e}")
+            return False
+    try:
         shooting_id = response.data[0]["id"]
         if temp is not None and cloudCover is not None and wind_speed is not None and wind_direction is not None:
             supabase.table("vejr").insert({
@@ -500,52 +542,271 @@ def tilFoejSkydniner(entry):
     )
 
 def build_duer_grid(sideduer, skud):
+    columns = len(sideduer)
+    double_columns = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
+    side_rows = [
+        ("venstre", "Venstre"),
+        ("bag", "Bag"),
+        ("hoejre", "Højre"),
+        ("spids", "Spids")
+    ]
+
+    def row(side_key, label):
+        return Tr(
+            Th(label, cls="text-left p-2 align-middle"),
+            *[
+                Td(
+                    Button(
+                        "1",
+                        type="button",
+                        cls=("duer-cell w-full h-10 rounded border text-lg font-bold " + ("border-blue-500 bg-blue-900/30" if col_idx in double_columns else "border-gray-600")),
+                        data_side=side_key,
+                        data_is_double="1" if col_idx in double_columns else "0",
+                        data_state="1",
+                        onclick="cycleDuerCell(this)"
+                    ),
+                    cls="p-1 text-center align-middle w-10"
+                )
+                for col_idx in range(columns)
+            ],
+            Td(
+                Input(type="hidden", name=f"skydning_{side_key}_skud", value=str(columns), id=f"skydning_{side_key}_skud"),
+                Input(type="hidden", name=f"skydning_{side_key}", value=str(columns), id=f"skydning_{side_key}")
+            )
+        )
 
     return Div(
-        Grid(
-            LabelSelect(
-                *Options(*[str(i) for i in sideduer], selected_idx=0),
-                label="Venstreduer",
-                name="skydning_venstre"
-            ),
-            LabelSelect(
-                *Options(*[str(i) for i in sideduer], selected_idx=0),
-                label="Bagduer",
-                name="skydning_bag"
-            ),
-            LabelSelect(
-                *Options(*[str(i) for i in sideduer], selected_idx=0),
-                label="Højreduer",
-                name="skydning_hoejre"
-            ),
-            LabelSelect(
-                *Options(*[str(i) for i in sideduer], selected_idx=0),
-                label="Spidsduer",
-                name="skydning_spids"
-            ),
-
-            LabelSelect(
-                *Options(*[str(i) for i in skud], selected_idx=0),
-                label="Venstre skud",
-                name="skydning_venstre_skud"
-            ),
-            LabelSelect(
-                *Options(*[str(i) for i in skud], selected_idx=0),
-                label="Bag skud",
-                name="skydning_bag_skud"
-            ),
-            LabelSelect(
-                *Options(*[str(i) for i in skud], selected_idx=0),
-                label="Højre skud",
-                name="skydning_hoejre_skud"
-            ),
-            LabelSelect(
-                *Options(*[str(i) for i in skud], selected_idx=0),
-                label="Spids skud",
-                name="skydning_spids_skud"
-            ),
+        Div("Duer", cls="font-semibold text-sm mb-2"),
+        Div("Single: 1, 1', 0, 0' | Double (markeret, 2 felter): 1, 0", cls="text-xs text-gray-400"),
+        Input(type="hidden", id="skydning_cell_states", name="skydning_cell_states", value=""),
+        Div(cls="overflow-x-auto")(
+            Table(cls="table table-sm table-fixed w-full border border-gray-700 rounded-xl")(
+                Thead(
+                    Tr(
+                        Th("Side", cls="text-left p-2 w-24"),
+                        *[Th(str(i + 1), cls=("text-center p-2 w-10 " + ("text-blue-300" if i in double_columns else ""))) for i in range(columns)]
+                    )
+                ),
+                Tbody(*[row(side_key, label) for side_key, label in side_rows])
+            )
         ),
-        id="duerContainer"
+        Div(cls="text-base font-semibold")(
+            Span("Score: "),
+            Span("0/0", id="skydning_total_score_display")
+        ),
+        Script("""
+            function cycleDuerCell(cell) {
+                const current = Number(cell.dataset.state || '1');
+                const isDouble = cell.dataset.isDouble === '1';
+                const nextState = isDouble ? (current === 1 ? 3 : 1) : (current >= 4 ? 1 : current + 1);
+                cell.dataset.state = String(nextState);
+                const stateSymbols = {
+                    1: '1',
+                    2: "1'",
+                    3: '0',
+                    4: "0'"
+                };
+                cell.textContent = stateSymbols[nextState];
+                updateDuerTotals();
+            }
+
+            function updateDuerTotals() {
+                const sides = ["venstre", "bag", "hoejre", "spids"];
+                let totalHits = 0;
+                let totalShots = 0;
+                sides.forEach((side) => {
+                    const cells = document.querySelectorAll('#duerContainer .duer-cell[data-side="' + side + '"]');
+                    let hits = 0;
+                    let shots = 0;
+
+                    cells.forEach((cell) => {
+                        const state = Number(cell.dataset.state || '1');
+                        if (state === 1) {
+                            hits += 1;
+                            shots += 1;
+                        } else if (state === 2) {
+                            hits += 1;
+                            shots += 2;
+                        } else if (state === 3) {
+                            shots += 1;
+                        } else if (state === 4) {
+                            shots += 2;
+                        }
+                    });
+
+                    const hitHidden = document.getElementById('skydning_' + side);
+                    const shotHidden = document.getElementById('skydning_' + side + '_skud');
+
+                    if (hitHidden) hitHidden.value = String(hits);
+                    if (shotHidden) shotHidden.value = String(shots);
+
+                    totalHits += hits;
+                    totalShots += shots;
+                });
+
+                const totalScoreDisplay = document.getElementById('skydning_total_score_display');
+                if (totalScoreDisplay) totalScoreDisplay.textContent = String(totalHits) + '/' + String(totalShots);
+
+                const statePayload = sides.map((side) => {
+                    const cells = document.querySelectorAll('#duerContainer .duer-cell[data-side="' + side + '"]');
+                    return {
+                        side: side,
+                        entries: Array.from(cells).map((cell) => Number(cell.dataset.state || '1'))
+                    };
+                });
+
+                const stateInput = document.getElementById('skydning_cell_states');
+                if (stateInput) stateInput.value = JSON.stringify(statePayload);
+            }
+            updateDuerTotals();
+        """),
+        id="duerContainer",
+        cls="space-y-3"
+    )
+
+def render_saved_duer_grid(data):
+    side_order = ["venstre", "bag", "hoejre", "spids"]
+
+    def parse_entries(raw):
+        if raw is None:
+            return None
+        values = None
+        if isinstance(raw, list):
+            values = raw
+        elif isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return None
+            try:
+                parsed = json.loads(text)
+            except Exception:
+                return None
+            values = parsed if isinstance(parsed, list) else None
+        if not isinstance(values, list):
+            return None
+
+        normalized = []
+        for value in values:
+            try:
+                state = int(value)
+            except Exception:
+                state = 1
+            if state < 1 or state > 4:
+                state = 1
+            normalized.append(state)
+        return normalized
+
+    side_entries = {
+        "venstre": parse_entries(data.get("venstre_cells")),
+        "bag": parse_entries(data.get("bag_cells")),
+        "hoejre": parse_entries(data.get("hoejre_cells")),
+        "spids": parse_entries(data.get("spids_cells"))
+    }
+
+    has_any_side_cells = any(entries for entries in side_entries.values())
+
+    if not has_any_side_cells:
+        raw_cell_states = data.get("cell_states")
+        try:
+            parsed_states = json.loads(raw_cell_states) if isinstance(raw_cell_states, str) and raw_cell_states.strip() else raw_cell_states
+        except Exception:
+            parsed_states = None
+        if isinstance(parsed_states, list):
+            for side_entry in parsed_states:
+                if not isinstance(side_entry, dict):
+                    continue
+                side = side_entry.get("side")
+                if side not in side_entries:
+                    continue
+                parsed_entries = parse_entries(side_entry.get("entries"))
+                if parsed_entries:
+                    side_entries[side] = parsed_entries
+
+    if not any(entries for entries in side_entries.values()):
+        return None
+
+    lengths = [len(entries) for entries in side_entries.values() if entries]
+    columns = max(lengths) if lengths else (6 if int(data.get("type", 40)) == 24 else 10)
+    if columns not in (6, 10):
+        columns = 6 if int(data.get("type", 40)) == 24 else 10
+
+    double_columns = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
+    state_symbols = {1: "1", 2: "1'", 3: "0", 4: "0'"}
+
+    for side in side_order:
+        entries = side_entries.get(side)
+        if not entries:
+            entries = [1] * columns
+        if len(entries) < columns:
+            entries = entries + [1] * (columns - len(entries))
+        if len(entries) > columns:
+            entries = entries[:columns]
+        side_entries[side] = entries
+
+    def score_for_entries(entries):
+        hits = 0
+        shots = 0
+        for state in entries:
+            if state == 1:
+                hits += 1
+                shots += 1
+            elif state == 2:
+                hits += 1
+                shots += 2
+            elif state == 3:
+                shots += 1
+            elif state == 4:
+                shots += 2
+        return hits, shots
+
+    total_hits = 0
+    total_shots = 0
+    for side in side_order:
+        side_hits, side_shots = score_for_entries(side_entries[side])
+        total_hits += side_hits
+        total_shots += side_shots
+
+    row_labels = {
+        "venstre": "Venstre",
+        "bag": "Bag",
+        "hoejre": "Højre",
+        "spids": "Spids"
+    }
+
+    def row(side):
+        return Tr(
+            Th(row_labels[side], cls="text-left p-2 align-middle"),
+            *[
+                Td(
+                    Span(
+                        state_symbols[side_entries[side][col_idx]],
+                        cls=("inline-flex items-center justify-center w-full h-10 rounded border text-lg font-bold " + ("border-blue-500 bg-blue-900/30" if col_idx in double_columns else "border-gray-600"))
+                    ),
+                    cls="p-1 text-center align-middle w-10"
+                )
+                for col_idx in range(columns)
+            ]
+        )
+
+    return Div(
+        Div("Duer", cls="font-semibold text-sm mb-2"),
+        Div("Single: 1, 1', 0, 0' | Double (markeret, 2 felter): 1, 0", cls="text-xs text-gray-400"),
+        Div(cls="overflow-x-auto")(
+            Table(cls="table table-sm table-fixed w-full border border-gray-700 rounded-xl")(
+                Thead(
+                    Tr(
+                        Th("Side", cls="text-left p-2 w-24"),
+                        *[Th(str(i + 1), cls=("text-center p-2 w-10 " + ("text-blue-300" if i in double_columns else ""))) for i in range(columns)]
+                    )
+                ),
+                Tbody(*[row(side) for side in side_order])
+            )
+        ),
+        Div(cls="text-base font-semibold")(
+            Span("Score: "),
+            Span(f"{total_hits}/{total_shots}")
+        ),
+        cls="space-y-3"
     )
 
 def getNavBar(active):
@@ -567,7 +828,296 @@ def getStatsNavBar(active):
         tab("Sted", "Sted", "/statistik/sted"),
         tab("Vejr", "Vejr", "/statistik/vejr"),
         tab("24 duer", "24 duer", "/statistik/24duer"),
+        tab("Miss", "Miss", "/statistik/miss"),
         alt=True
+    )
+
+def getYearNavBar(years, active_year=None, base_path="/start"):
+    items = [
+        Li(
+            A("Alle", hx_get=base_path, hx_target="body", hx_swap="outerHTML"),
+            cls="uk-active" if active_year is None else ""
+        )
+    ]
+    items.extend([
+        Li(
+            A(str(year), hx_get=f"{base_path}/{year}", hx_target="body", hx_swap="outerHTML"),
+            cls="uk-active" if str(active_year) == str(year) else ""
+        )
+        for year in years
+    ])
+    return TabContainer(*items, alt=True)
+
+def parse_saved_cell_entries(raw):
+    if raw is None:
+        return None
+    values = None
+    if isinstance(raw, list):
+        values = raw
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return None
+        values = parsed if isinstance(parsed, list) else None
+    if not isinstance(values, list):
+        return None
+
+    normalized = []
+    for value in values:
+        try:
+            state = int(value)
+        except Exception:
+            state = 1
+        if state < 1 or state > 4:
+            state = 1
+        normalized.append(state)
+    return normalized
+
+def extract_side_entries(record):
+    side_entries = {
+        "venstre": parse_saved_cell_entries(record.get("venstre_cells")),
+        "bag": parse_saved_cell_entries(record.get("bag_cells")),
+        "hoejre": parse_saved_cell_entries(record.get("hoejre_cells")),
+        "spids": parse_saved_cell_entries(record.get("spids_cells"))
+    }
+
+    if not any(entries for entries in side_entries.values()):
+        raw_cell_states = record.get("cell_states")
+        try:
+            parsed_states = json.loads(raw_cell_states) if isinstance(raw_cell_states, str) and raw_cell_states.strip() else raw_cell_states
+        except Exception:
+            parsed_states = None
+        if isinstance(parsed_states, list):
+            for side_entry in parsed_states:
+                if not isinstance(side_entry, dict):
+                    continue
+                side = side_entry.get("side")
+                if side not in side_entries:
+                    continue
+                parsed_entries = parse_saved_cell_entries(side_entry.get("entries"))
+                if parsed_entries:
+                    side_entries[side] = parsed_entries
+
+    lengths = [len(entries) for entries in side_entries.values() if entries]
+    if not lengths:
+        return None, None
+
+    columns = max(lengths)
+    if columns not in (6, 10):
+        shoot_type = int(record.get("type", 40)) if str(record.get("type", "40")) in ("24", "40") else 40
+        columns = 6 if shoot_type == 24 else 10
+
+    for side in side_entries:
+        entries = side_entries[side] or [1] * columns
+        if len(entries) < columns:
+            entries = entries + [1] * (columns - len(entries))
+        if len(entries) > columns:
+            entries = entries[:columns]
+        side_entries[side] = entries
+
+    return side_entries, columns
+
+def getMissAnalysis(data):
+    side_order = ["venstre", "bag", "hoejre", "spids"]
+    side_labels = {
+        "venstre": "Venstre",
+        "bag": "Bag",
+        "hoejre": "Højre",
+        "spids": "Spids"
+    }
+    misses = {3, 4}
+    extra_shot_states = {2, 4}
+    singles = {}
+    doubles = {}
+
+    sorted_data = sorted(data or [], key=lambda entry: entry.get("date", ""))
+    for entry in sorted_data:
+        side_entries, columns = extract_side_entries(entry)
+        if not side_entries or columns not in (6, 10):
+            continue
+
+        double_columns = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
+        single_columns = [idx for idx in range(columns) if idx not in double_columns]
+
+        sorted_double_cols = sorted(double_columns)
+        double_pairs = []
+        idx = 0
+        while idx < len(sorted_double_cols) - 1:
+            left = sorted_double_cols[idx]
+            right = sorted_double_cols[idx + 1]
+            if right == left + 1:
+                double_pairs.append((left, right))
+                idx += 2
+            else:
+                idx += 1
+
+        for side in side_order:
+            entries = side_entries[side]
+
+            for col_idx in single_columns:
+                key = (side, col_idx + 1)
+                if key not in singles:
+                    singles[key] = {
+                        "side": side,
+                        "side_label": side_labels[side],
+                        "col_start": col_idx + 1,
+                        "col_end": None,
+                        "columns": columns,
+                        "misses": 0,
+                        "extra_shots": 0,
+                        "attempts": 0
+                    }
+                singles[key]["columns"] = max(singles[key]["columns"], columns)
+                singles[key]["attempts"] += 1
+                if entries[col_idx] in misses:
+                    singles[key]["misses"] += 1
+                if entries[col_idx] in extra_shot_states:
+                    singles[key]["extra_shots"] += 1
+
+            for left, right in double_pairs:
+                key = (side, left + 1, right + 1)
+                if key not in doubles:
+                    doubles[key] = {
+                        "side": side,
+                        "side_label": side_labels[side],
+                        "col_start": left + 1,
+                        "col_end": right + 1,
+                        "columns": columns,
+                        "misses": 0,
+                        "attempts": 0
+                    }
+                doubles[key]["columns"] = max(doubles[key]["columns"], columns)
+                doubles[key]["attempts"] += 1
+                if entries[left] in misses or entries[right] in misses:
+                    doubles[key]["misses"] += 1
+
+    singles_rows = []
+    for row in singles.values():
+        attempts = row["attempts"]
+        misses_count = row["misses"]
+        extra_shots_count = row["extra_shots"]
+        miss_rate = round((misses_count / attempts) * 100, 2) if attempts else 0
+        extra_shot_rate = round((extra_shots_count / attempts) * 100, 2) if attempts else 0
+        singles_rows.append({
+            "side": row["side"],
+            "side_label": row["side_label"],
+            "col_start": row["col_start"],
+            "col_end": row["col_end"],
+            "columns": row["columns"],
+            "miss_rate": miss_rate,
+            "misses": misses_count,
+            "extra_shot_rate": extra_shot_rate,
+            "extra_shots": extra_shots_count,
+            "attempts": attempts
+        })
+
+    doubles_rows = []
+    for row in doubles.values():
+        attempts = row["attempts"]
+        misses_count = row["misses"]
+        miss_rate = round((misses_count / attempts) * 100, 2) if attempts else 0
+        doubles_rows.append({
+            "side": row["side"],
+            "side_label": row["side_label"],
+            "col_start": row["col_start"],
+            "col_end": row["col_end"],
+            "columns": row["columns"],
+            "miss_rate": miss_rate,
+            "misses": misses_count,
+            "attempts": attempts
+        })
+
+    singles_rows = sorted(singles_rows, key=lambda row: (row["miss_rate"], row["misses"], row["attempts"]), reverse=True)
+    extra_singles_rows = sorted(singles_rows, key=lambda row: (row["extra_shot_rate"], row["extra_shots"], row["attempts"]), reverse=True)
+    doubles_rows = sorted(doubles_rows, key=lambda row: (row["miss_rate"], row["misses"], row["attempts"]), reverse=True)
+
+    return {
+        "singles": singles_rows,
+        "doubles": doubles_rows,
+        "extra_singles": extra_singles_rows
+    }
+
+def renderMissPatternRow(row):
+    columns = int(row.get("columns", 10))
+    columns = 6 if columns == 6 else 10
+    double_columns = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
+    highlight_columns = {int(row.get("col_start", 1)) - 1}
+    col_end = row.get("col_end")
+    if col_end is not None:
+        highlight_columns.add(int(col_end) - 1)
+
+    return Div(
+        Span(row.get("side_label", ""), cls="inline-block w-16 text-sm font-semibold"),
+        Div(
+            *[
+                Span(
+                    "",
+                    cls=(
+                        "inline-block w-7 h-7 rounded border "
+                        + ("border-red-300 bg-red-600" if col_idx in highlight_columns else ("border-blue-500 bg-blue-900/20" if col_idx in double_columns else "border-gray-600"))
+                    )
+                )
+                for col_idx in range(columns)
+            ],
+            cls="inline-flex gap-1"
+        ),
+        cls="flex items-center gap-3"
+    )
+
+def createMissProblemTable(rows):
+    if not rows:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+
+    return Table(cls="border-collapse border border-gray-100 table-auto w-full")(
+        Thead(
+            Tr(
+                Th("Duer", cls="text-left border text-bold"),
+                Th("Miss %", cls="text-left border text-bold"),
+                Th("Misses", cls="text-left border text-bold"),
+                Th("Forsøg", cls="text-left border text-bold")
+            )
+        ),
+        Tbody(
+            *[
+                Tr(
+                    Td(renderMissPatternRow(row), cls="text-left border"),
+                    Td(f"{row['miss_rate']}%", cls="text-left border"),
+                    Td(str(row["misses"]), cls="text-left border"),
+                    Td(str(row["attempts"]), cls="text-left border")
+                )
+                for row in rows
+            ]
+        )
+    )
+
+def createExtraShotProblemTable(rows):
+    if not rows:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+
+    return Table(cls="border-collapse border border-gray-100 table-auto w-full")(
+        Thead(
+            Tr(
+                Th("Duer", cls="text-left border text-bold"),
+                Th("Ekstra skud %", cls="text-left border text-bold"),
+                Th("Ekstra skud", cls="text-left border text-bold"),
+                Th("Forsøg", cls="text-left border text-bold")
+            )
+        ),
+        Tbody(
+            *[
+                Tr(
+                    Td(renderMissPatternRow(row), cls="text-left border"),
+                    Td(f"{row['extra_shot_rate']}%", cls="text-left border"),
+                    Td(str(row["extra_shots"]), cls="text-left border"),
+                    Td(str(row["attempts"]), cls="text-left border")
+                )
+                for row in rows
+            ]
+        )
     )
 
 
@@ -596,10 +1146,10 @@ def createStatsList(headers, df, value_keys, label_key=None):
 @app.route("/opdaterSkydningType/{skydning_type}")
 def opdaterSkydningType(skydning_type: str):
     if skydning_type == "40":
-        sideduer = list(reversed(range(0, 11)))
+        sideduer = list(reversed(range(1, 11)))
         skud = ['10', '11', '12', '13', '14']
     else:
-        sideduer = list(reversed(range(0, 7)))
+        sideduer = list(reversed(range(1, 7)))
         skud = ['6', '7', '8']
 
     return build_duer_grid(sideduer, skud)
@@ -682,10 +1232,17 @@ def getDataframeFromData(data, filter_type=40):
     return df
  
 @app.route("/statistik/24duer")
-def statistik24duer(session):
+@app.route("/statistik/24duer/{year}")
+def statistik24duer(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
     print(f"User ID for statistik/24duer: {userId}")
+    years = getDistinctShoortingYears(userId=userId)
     data = getShootingData24Duer(userId=userId)
+    if year is not None:
+        selected_year = str(year)
+        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
+    else:
+        selected_year = None
     df = getDataframeFromData(data, filter_type=24)
 
     averages_24duer = getAverages(df)
@@ -697,6 +1254,7 @@ def statistik24duer(session):
             getNavBar(active="Statistik"),
             Br(),
             getStatsNavBar(active="24 duer"),
+            getYearNavBar(years, active_year=selected_year, base_path="/statistik/24duer"),
             Br(),
             Div("Resultater samlet", cls="divider text-2xl font-bold"),
             Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
@@ -706,9 +1264,16 @@ def statistik24duer(session):
         )
 
 @app.route("/statistik/anledning")
-def statistikAnledning(session):
+@app.route("/statistik/anledning/{year}")
+def statistikAnledning(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
+    years = getDistinctShoortingYears(userId=userId)
     data = getShootingData(userId=userId)
+    if year is not None:
+        selected_year = str(year)
+        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
+    else:
+        selected_year = None
     df = getDataframeFromData(data)
 
     averages = getAverages(df)
@@ -723,6 +1288,7 @@ def statistikAnledning(session):
 
             Br(),
             getStatsNavBar(active="Anledning"),
+            getYearNavBar(years, active_year=selected_year, base_path="/statistik/anledning"),
             Br(),
             Div("Resultater per anledning", cls="divider text-2xl font-bold"),
             Card("Gennemsnit per anledning", cls="font-bold text-center mb-2")(
@@ -735,9 +1301,16 @@ def statistikAnledning(session):
         )         
 
 @app.route("/statistik/sted")
-def statistikSted(session):
+@app.route("/statistik/sted/{year}")
+def statistikSted(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
+    years = getDistinctShoortingYears(userId=userId)
     data = getShootingData(userId=userId)
+    if year is not None:
+        selected_year = str(year)
+        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
+    else:
+        selected_year = None
     df = getDataframeFromData(data)
 
     averages = getAverages(df)
@@ -751,6 +1324,7 @@ def statistikSted(session):
             getNavBar(active="Statistik"),
             Br(),
             getStatsNavBar(active="Sted"),
+            getYearNavBar(years, active_year=selected_year, base_path="/statistik/sted"),
             Br(),
             Div("Resultater per sted", cls="divider text-2xl font-bold"),
             Card("Gennemsnit per sted", cls="font-bold text-center mb-2")(
@@ -759,18 +1333,20 @@ def statistikSted(session):
             Card("Procenter per sted", cls="font-bold text-center")(
                 createStatsList(percentageHeaders, pd.DataFrame(percetages["location_percentages"]), percentageValueKeys, label_key="skydebaner.name")
             ),
-            Br(),
-            Div("Resultater samlet", cls="divider text-2xl font-bold"),
-            Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
-                createStatsList(resultHeaders, pd.DataFrame([averages["normal_averages"]]), resultValueKeys)
-            ),
             title="Statistik"
         )
  
 @app.route("/statistik/vejr")
-def statistikVejr(session):
+@app.route("/statistik/vejr/{year}")
+def statistikVejr(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
+    years = getDistinctShoortingYears(userId=userId)
     data = getShootingData(userId=userId)
+    if year is not None:
+        selected_year = str(year)
+        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
+    else:
+        selected_year = None
     df = getDataframeFromData(data)
 
     weatherDataPercentages = getPercentagesByWeather(df)
@@ -780,6 +1356,7 @@ def statistikVejr(session):
             getNavBar(active="Statistik"),
             Br(),
             getStatsNavBar(active="Vejr"),
+            getYearNavBar(years, active_year=selected_year, base_path="/statistik/vejr"),
             Br(),
             
             Titled("Vejrstatistik for samlede resultater",
@@ -788,20 +1365,64 @@ def statistikVejr(session):
                    createStatsGraph(weatherDataPercentages["wind_speed_percentages"], "Samlet resultater baseret på vindhastighed", "Vindhastighed (m/s)", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=False),
                    createStatsGraph(weatherDataPercentages["wind_dir_percentages"], "Samlet resultater baseret på vindretning", "Vindretning", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=True),
                    createStatsGraph(weatherDataPercentages["weather_code_percentages"], "Samlet resultater baseret på vejr", "Vejr", "Gennemsnitligt antal ramte duer", Total=True, BarPlot=True),cls="mt-10"),
-            Titled("Vejrstatistik for sideduer",
-                   createStatsGraph(weatherDataPercentages["temp_percentages"], "Sideduer baseret på temperatur", "Temperatur (°C)", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=False),
-                   createStatsGraph(weatherDataPercentages["cloud_percentages"], "Sideduer baseret på sky-dække", "Sky-dække (%)", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=False),
-                   createStatsGraph(weatherDataPercentages["wind_speed_percentages"], "Sideduer baseret på vindhastighed", "Vindhastighed (m/s)", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=False),
-                   createStatsGraph(weatherDataPercentages["wind_dir_percentages"], "Sideduer baseret på vindretning", "Vindretning", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=True),
-                   createStatsGraph(weatherDataPercentages["weather_code_percentages"], "Sideduer baseret på vejr", "Vejr", "Gennemsnitligt antal ramte side duer", Total=False, BarPlot=True),
-                    cls="mt-10"),
+            title="Statistik"
+        )
+
+@app.route("/statistik/miss")
+@app.route("/statistik/miss/{year}")
+def statistikMiss(session, year: str = None):
+    userId = session.get(SESSION_TOKEN)
+    years = getDistinctShoortingYears(userId=userId)
+    data = getShootingData(userId=userId)
+    if year is not None:
+        selected_year = str(year)
+        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
+    else:
+        selected_year = None
+
+    miss_data = getMissAnalysis(data)
+    troublesome_rows = sorted(
+        miss_data["singles"] + miss_data["doubles"],
+        key=lambda row: (row["miss_rate"], row["misses"], row["attempts"]),
+        reverse=True
+    )[:5]
+    troublesome_rows = [
+        {
+            **row,
+            "col_end": None
+        }
+        for row in troublesome_rows
+    ]
+    extra_singles_rows = miss_data["extra_singles"][:5]
+
+    return AppLayout(
+            getNavBar(active="Statistik"),
+            Br(),
+            getStatsNavBar(active="Miss"),
+            getYearNavBar(years, active_year=selected_year, base_path="/statistik/miss"),
+            Br(),
+            Div("Mest problematiske duer", cls="divider text-2xl font-bold"),
+            Card("Top 5", cls="font-bold text-center mb-2")(
+                createMissProblemTable(troublesome_rows)
+            ),
+            Div("Enkeltduer med flest ekstra skud", cls="divider text-2xl font-bold"),
+            Card("Top 5", cls="font-bold text-center mb-2")(
+                createExtraShotProblemTable(extra_singles_rows)
+            ),
             title="Statistik"
         )
     
 @app.route("/statistik")
-def statistik(session):
+@app.route("/statistik/{year}")
+def statistik(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
+    years = getDistinctShoortingYears(userId=userId)
     data = getShootingData(userId=userId)
+    if year is not None:
+        selected_year = str(year)
+        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
+    else:
+        selected_year = None
     df = getDataframeFromData(data)
 
     averages = getAverages(df)
@@ -819,6 +1440,7 @@ def statistik(session):
             getNavBar(active="Statistik"),
             Br(),
             getStatsNavBar(active="Samlet"),
+            getYearNavBar(years, active_year=selected_year, base_path="/statistik"),
             Br(),
 
             Grid(
@@ -855,12 +1477,14 @@ def statistik(session):
         )
 
 
-@app.route("/start")
-def startPage(session):
+def renderStartPage(session, selected_year=None):
     userId = session.get(SESSION_TOKEN)
     data = getShootingData(userId=userId)
- #   headers = ["Sted", "Dato", "Anledning", "40/24", "Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud", ""]
- #   value_keys = ["place_id", "date", "occasion", "type", "result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
+    years = getDistinctShoortingYears(userId=userId)
+    if selected_year is not None:
+        selected_year = str(selected_year)
+        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
+
     return AppLayout(
 
         # Top action card
@@ -876,6 +1500,7 @@ def startPage(session):
         nySkydning(),
 
         getNavBar(active="Skydninger"),
+        getYearNavBar(years, active_year=selected_year, base_path="/start"),
 
         # Liste i stedet for tabel på mobil
         Div(
@@ -905,6 +1530,17 @@ def startPage(session):
         title="Oversigt"
     )
 
+@app.route("/start")
+def startPage(session):
+    userId = session.get(SESSION_TOKEN)
+    years = getDistinctShoortingYears(userId=userId)
+    current_year = str(pd.Timestamp.now().year)
+    return renderStartPage(session, selected_year=current_year if current_year in years else None)
+
+@app.route("/start/{year}")
+def startPageByYear(session, year: str):
+    return renderStartPage(session, selected_year=year)
+
 @app.route("/visSkydning/{skydning_id}")
 def visSkydning(skydning_id: int):
     data = getSingleShootingData(skydning_id)
@@ -914,6 +1550,7 @@ def visSkydning(skydning_id: int):
             P("Skydning ikke fundet."),
             Button("Tilbage til start", hx_get="/start", hx_swap="outerHTML", hx_trigger="click", hx_target="body"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
         )
+    saved_duer_grid = render_saved_duer_grid(data)
     return Container(
                 # Top sektion – stort resultat fokus
                 Card(cls="p-6 rounded-3xl shadow-xl text-center bg-gradient-to-br from-blue-600 to-blue-800")(
@@ -939,8 +1576,7 @@ def visSkydning(skydning_id: int):
 
                 Br(),
 
-                # Duel stats grid (mobil: 2 kolonner, desktop: 4)
-                Grid(
+                saved_duer_grid if saved_duer_grid else Grid(
                     Card(cls="p-4 text-center shadow-md rounded-2xl")(
                         P("Venstre", cls="text-sm text-gray-400"),
                         H3(f"{data['venstre']} / {data['venstre_skud']}", cls="text-xl font-bold")
@@ -1025,21 +1661,22 @@ def visSkydning(skydning_id: int):
 
 def nySkydning():
     return Modal(
-        Div(cls='p-6')(
-            ModalTitle("Opret ny skydning", cls="mb-4 text-2xl font-bold text-center"),
-            Br(),
-            FormLabel("Runde"), DivLAligned(Radio(name="skydning_type", value="40", checked=True, hx_get="/opdaterSkydningType/40", hx_target="#duerContainer", hx_trigger="change")("40"),
-                                            Radio(name="skydning_type", value="24", hx_get="/opdaterSkydningType/24", hx_target="#duerContainer", hx_trigger="change")("24")), 
-            Br(),
+        Div(cls='p-6 max-w-4xl')(
+            ModalTitle("Opret ny skydning", cls="mb-6 text-2xl font-bold text-center"),
             Form(cls='space-y-6', hx_post="/gemSkydning", hx_swap="outerHTML")(
                 LabelSelect(*Options(*[str(skydebane["name"]) for skydebane in skydebaner]), label="Sted", name="skydning_sted"),
-                LabelInput(label="Dato", name="skydning_dato", type="datetime-local"),
                 LabelSelect(
                     *Options(*[str(i) for i in getAnledninger()], selected_idx=1, disabled_idxs={0}), label="Anledning", name="skydning_occation"
                 ),
-
-                build_duer_grid(DropDown_Sideduer_default, DropDown_Skud_default)
-                ,
+                LabelInput(label="Dato", name="skydning_dato", type="datetime-local"),
+                Div(cls="space-y-2")(
+                    FormLabel("Runde"),
+                    DivLAligned(
+                        Radio(name="skydning_type", value="40", checked=True, hx_get="/opdaterSkydningType/40", hx_target="#duerContainer", hx_trigger="change")("40"),
+                        Radio(name="skydning_type", value="24", hx_get="/opdaterSkydningType/24", hx_target="#duerContainer", hx_trigger="change")("24")
+                    )
+                ),
+                build_duer_grid(DropDown_Sideduer_default, DropDown_Skud_default),
                 DivRAligned(
                     ModalCloseButton("Anuller", cls=ButtonT.ghost),
                     Button(
@@ -1056,14 +1693,94 @@ def nySkydning():
     )
 
 @app.route("/gemSkydning", methods=["POST"])
-def gemSkydning(session, skydning_sted: str, skydning_dato: str, skydning_occation: str, skydning_venstre: int, skydning_venstre_skud: int, skydning_hoejre: int, skydning_hoejre_skud: int,
-                   skydning_bag: int, skydning_bag_skud: int, skydning_spids: int, skydning_spids_skud: int):
+def gemSkydning(session, skydning_sted: str, skydning_dato: str, skydning_occation: str, skydning_type: str = "40", skydning_cell_states: str = ""):
     userId = session.get(SESSION_TOKEN)
+    side_hits = {"venstre": 0, "hoejre": 0, "bag": 0, "spids": 0}
+    side_shots = {"venstre": 0, "hoejre": 0, "bag": 0, "spids": 0}
+    side_cells = {"venstre": None, "hoejre": None, "bag": None, "spids": None}
+
+    normalized_cell_states = ""
+    derived_round_size = None
+    if skydning_cell_states:
+        try:
+            parsed_states = json.loads(skydning_cell_states)
+            normalized_cell_states = json.dumps(parsed_states, separators=(",", ":"))
+            if isinstance(parsed_states, list):
+                extracted_round_sizes = []
+                extracted_hits = {}
+                extracted_shots = {}
+
+                for side_entry in parsed_states:
+                    if not isinstance(side_entry, dict):
+                        continue
+                    side = side_entry.get("side")
+                    entries = side_entry.get("entries")
+                    if side not in side_hits or not isinstance(entries, list):
+                        continue
+
+                    hits = 0
+                    shots = 0
+                    for raw_state in entries:
+                        state = int(raw_state)
+                        if state == 1:
+                            hits += 1
+                            shots += 1
+                        elif state == 2:
+                            hits += 1
+                            shots += 2
+                        elif state == 3:
+                            shots += 1
+                        elif state == 4:
+                            shots += 2
+
+                    extracted_hits[side] = hits
+                    extracted_shots[side] = shots
+                    side_cells[side] = [int(raw_state) for raw_state in entries]
+                    extracted_round_sizes.append(len(entries))
+
+                if len(extracted_hits) == 4:
+                    side_hits.update(extracted_hits)
+                    side_shots.update(extracted_shots)
+                    if len(set(extracted_round_sizes)) == 1 and extracted_round_sizes[0] in (6, 10):
+                        derived_round_size = extracted_round_sizes[0]
+        except Exception:
+            normalized_cell_states = ""
+
+    if not normalized_cell_states or sum(side_shots.values()) == 0:
+        return Modal(
+            Div(cls='p-6')(
+                ModalTitle("Fejl", cls="mb-4 text-2xl font-bold text-center"),
+                Br(),
+                P("Celle-data mangler eller er ugyldig. Prøv at udfylde skydningen igen.", cls="text-center"),
+                Br(),
+                DivRAligned(
+                    ModalCloseButton("Luk", cls=ButtonT.ghost),
+                    Button("Tilbage til start", cls=ButtonT.primary, hx_get="/start", hx_swap="outerHTML"), cls='space-x-2'
+                )
+            ), id="errorModal", open=True
+        )
+
+    skydning_venstre = side_hits["venstre"]
+    skydning_hoejre = side_hits["hoejre"]
+    skydning_bag = side_hits["bag"]
+    skydning_spids = side_hits["spids"]
+    skydning_venstre_skud = side_shots["venstre"]
+    skydning_hoejre_skud = side_shots["hoejre"]
+    skydning_bag_skud = side_shots["bag"]
+    skydning_spids_skud = side_shots["spids"]
+
     skydning_result_hit = skydning_venstre + skydning_hoejre + skydning_bag + skydning_spids
     skydning_result_shots = skydning_venstre_skud + skydning_hoejre_skud + skydning_bag_skud + skydning_spids_skud
-    skydning_type = 40 if skydning_result_hit > 24 else 24
+    if derived_round_size == 10:
+        skydning_type = 40
+    elif derived_round_size == 6:
+        skydning_type = 24
+    else:
+        skydning_type = int(skydning_type) if str(skydning_type) in ("24", "40") else (40 if skydning_result_hit > 24 else 24)
+
     saved = saveShootingData(skydning_sted, userId, skydning_dato, skydning_occation, int(skydning_type), skydning_result_hit, skydning_result_shots,
-                              skydning_venstre, skydning_venstre_skud, skydning_hoejre, skydning_hoejre_skud, skydning_bag, skydning_bag_skud, skydning_spids, skydning_spids_skud)
+                              skydning_venstre, skydning_venstre_skud, skydning_hoejre, skydning_hoejre_skud, skydning_bag, skydning_bag_skud, skydning_spids, skydning_spids_skud, normalized_cell_states,
+                              venstre_cells=side_cells["venstre"], bag_cells=side_cells["bag"], hoejre_cells=side_cells["hoejre"], spids_cells=side_cells["spids"])
     # show a new error modal if saving failed, otherwise redirect to start page
     if not saved:
         return Modal(
