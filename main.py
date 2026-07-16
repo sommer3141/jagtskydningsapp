@@ -559,7 +559,7 @@ def build_duer_grid(sideduer, skud):
                     Button(
                         "1",
                         type="button",
-                        cls=("duer-cell w-7 h-8 sm:w-full sm:h-10 rounded border text-xs sm:text-lg font-bold " + ("border-blue-500 bg-blue-900/30" if col_idx in double_columns else "border-gray-600")),
+                        cls=("duer-cell w-7 h-8 sm:w-full sm:h-10 rounded border text-xs sm:text-lg font-bold text-white " + ("border-blue-500" if col_idx in double_columns else "border-gray-600") + " bg-green-600"),
                         data_side=side_key,
                         data_is_double="1" if col_idx in double_columns else "0",
                         data_state="1",
@@ -595,6 +595,18 @@ def build_duer_grid(sideduer, skud):
             Span("0/0", id="skydning_total_score_display")
         ),
         Script("""
+            function duerStateColorClass(state) {
+                if (state === 2) return 'bg-yellow-500 text-black';
+                if (state === 3 || state === 4) return 'bg-red-600 text-white';
+                return 'bg-green-600 text-white';
+            }
+
+            function applyDuerCellVisualState(cell, state) {
+                cell.classList.remove('bg-green-600', 'bg-yellow-500', 'bg-red-600', 'text-white', 'text-black');
+                const colorClasses = duerStateColorClass(state).split(' ');
+                colorClasses.forEach((className) => cell.classList.add(className));
+            }
+
             function cycleDuerCell(cell) {
                 const current = Number(cell.dataset.state || '1');
                 const isDouble = cell.dataset.isDouble === '1';
@@ -607,6 +619,7 @@ def build_duer_grid(sideduer, skud):
                     4: "0'"
                 };
                 cell.textContent = stateSymbols[nextState];
+                applyDuerCellVisualState(cell, nextState);
                 updateDuerTotals();
             }
 
@@ -658,6 +671,9 @@ def build_duer_grid(sideduer, skud):
                 const stateInput = document.getElementById('skydning_cell_states');
                 if (stateInput) stateInput.value = JSON.stringify(statePayload);
             }
+            document.querySelectorAll('#duerContainer .duer-cell').forEach((cell) => {
+                applyDuerCellVisualState(cell, Number(cell.dataset.state || '1'));
+            });
             updateDuerTotals();
         """),
         id="duerContainer",
@@ -666,6 +682,12 @@ def build_duer_grid(sideduer, skud):
 
 def render_saved_duer_grid(data):
     side_order = ["venstre", "bag", "hoejre", "spids"]
+    def state_color_class(state):
+        if state == 2:
+            return "bg-yellow-500 text-black"
+        if state in (3, 4):
+            return "bg-red-600 text-white"
+        return "bg-green-600 text-white"
 
     def parse_entries(raw):
         if raw is None:
@@ -780,7 +802,7 @@ def render_saved_duer_grid(data):
                 Td(
                     Span(
                         state_symbols[side_entries[side][col_idx]],
-                        cls=("inline-flex items-center justify-center w-full h-10 rounded border text-lg font-bold " + ("border-blue-500 bg-blue-900/30" if col_idx in double_columns else "border-gray-600"))
+                        cls=("inline-flex items-center justify-center w-full h-10 rounded border text-lg font-bold " + ("border-blue-500 " if col_idx in double_columns else "border-gray-600 ") + state_color_class(side_entries[side][col_idx]))
                     ),
                     cls="p-1 text-center align-middle w-10"
                 )
@@ -934,6 +956,16 @@ def getMissAnalysis(data):
     singles = {}
     problem_cells = {}
 
+    def make_state_counts():
+        return {1: 0, 2: 0, 3: 0, 4: 0}
+
+    def choose_highlight_state(state_counts, priorities):
+        for states in priorities:
+            available = [state for state in states if state_counts.get(state, 0) > 0]
+            if available:
+                return max(available, key=lambda state: state_counts.get(state, 0))
+        return 1
+
     sorted_data = sorted(data or [], key=lambda entry: entry.get("date", ""))
     for entry in sorted_data:
         side_entries, columns = extract_side_entries(entry)
@@ -967,11 +999,13 @@ def getMissAnalysis(data):
                         "col_start": col_idx + 1,
                         "col_end": None,
                         "columns": columns,
+                        "state_counts": make_state_counts(),
                         "misses": 0,
                         "attempts": 0
                     }
                 problem_cells[key]["columns"] = max(problem_cells[key]["columns"], columns)
                 problem_cells[key]["attempts"] += 1
+                problem_cells[key]["state_counts"][state] += 1
                 if state in misses:
                     problem_cells[key]["misses"] += 1
 
@@ -984,12 +1018,14 @@ def getMissAnalysis(data):
                         "col_start": col_idx + 1,
                         "col_end": None,
                         "columns": columns,
+                        "state_counts": make_state_counts(),
                         "misses": 0,
                         "extra_shots": 0,
                         "attempts": 0
                     }
                 singles[key]["columns"] = max(singles[key]["columns"], columns)
                 singles[key]["attempts"] += 1
+                singles[key]["state_counts"][entries[col_idx]] += 1
                 if entries[col_idx] in misses:
                     singles[key]["misses"] += 1
                 if entries[col_idx] in extra_shot_states:
@@ -1008,6 +1044,7 @@ def getMissAnalysis(data):
             "col_start": row["col_start"],
             "col_end": row["col_end"],
             "columns": row["columns"],
+            "highlight_state": choose_highlight_state(row["state_counts"], [(2, 4), (1,), (3,)]),
             "miss_rate": miss_rate,
             "misses": misses_count,
             "extra_shot_rate": extra_shot_rate,
@@ -1026,6 +1063,7 @@ def getMissAnalysis(data):
             "col_start": row["col_start"],
             "col_end": row["col_end"],
             "columns": row["columns"],
+            "highlight_state": choose_highlight_state(row["state_counts"], [(3, 4), (2,), (1,)]),
             "miss_rate": miss_rate,
             "misses": misses_count,
             "attempts": attempts
@@ -1049,6 +1087,14 @@ def renderMissPatternRow(row):
     col_end = row.get("col_end")
     if col_end is not None:
         highlight_columns.add(int(col_end) - 1)
+    highlight_state = int(row.get("highlight_state", 1))
+
+    if highlight_state in (3, 4):
+        highlight_cls = "border-red-300 bg-red-600"
+    elif highlight_state == 2:
+        highlight_cls = "border-yellow-300 bg-yellow-500"
+    else:
+        highlight_cls = "border-green-300 bg-green-600"
 
     return Div(
         Span(row.get("side_label", ""), cls="inline-block w-16 text-sm font-semibold"),
@@ -1058,7 +1104,7 @@ def renderMissPatternRow(row):
                     "",
                     cls=(
                         "inline-block w-7 h-7 rounded border "
-                        + ("border-red-300 bg-red-600" if col_idx in highlight_columns else ("border-green-200" if col_idx in double_columns else "border-green-500"))
+                        + (highlight_cls if col_idx in highlight_columns else ("border-green-200" if col_idx in double_columns else "border-green-500"))
                     )
                 )
                 for col_idx in range(columns)
