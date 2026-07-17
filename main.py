@@ -2,7 +2,6 @@ import os
 import uuid
 import json
 import pandas as pd
-import plotly.graph_objects as go
 import requests
 from dotenv import load_dotenv
 from fasthtml.common import *
@@ -22,7 +21,17 @@ DropDown_Skud_default = ['10', '11', '12', '13', '14']
         
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-entry, rt = fast_app(secret_key="superhemmeligkey", hdrs=Theme.blue.headers(), dark_mode=True)
+entry, rt = fast_app(
+    secret_key="superhemmeligkey",
+    hdrs=(
+        *Theme.blue.headers(),
+        Meta(name="viewport", content="width=device-width, initial-scale=1, viewport-fit=cover"),
+        Meta(name="apple-mobile-web-app-capable", content="yes"),
+        Meta(name="apple-mobile-web-app-status-bar-style", content="black-translucent"),
+        Script(src="https://cdn.jsdelivr.net/npm/chart.js")
+    ),
+    dark_mode=True
+)
 app = entry # entry point in vercel  
 
 def AppLayout(*content, title=None):
@@ -31,6 +40,13 @@ def AppLayout(*content, title=None):
             Style("""
                 .htmx-indicator { display: none; }
                 .htmx-request .htmx-indicator { display: inline-block; }
+                * { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+                input, select, textarea { font-size: 16px !important; }
+                .chart-container { position: relative; width: 100%; height: 220px; }
+                @media (min-width: 640px) { .chart-container { height: 340px; } }
+                .nav-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+                .nav-scroll::-webkit-scrollbar { display: none; }
+                body { padding-bottom: env(safe-area-inset-bottom); }
             """),
             H1(title, cls="text-2xl md:text-3xl font-bold mb-6") if title else None,
             *content,
@@ -174,7 +190,7 @@ def getweatherData(latitude: float, longitude: float, datetime: str):
     return None
 
 def getAnledninger():
-    return ["Vælg anledning", "Træning", "Tavle", "DM", "Femkant", "Grand Prix", "Amtsturnering", "Hold DM", "Andet Konkurrence", "Andet"]
+    return ["Vælg anledning", "Træning", "Tavle", "DM", "Femkant", "Grand Prix", "Amtsturnering", "Hold DM", "Andet Konkurrence", "Årsskydning", "Andet"]
 
 def deleteShootingData(skydning_id: int, userId: int = None):
     try:
@@ -287,6 +303,36 @@ def getAverages(df):
         "normal_averages": normal_averages.to_dict(orient="records")[0]
     }
 
+def getTimeOfDayStats(data):
+    if not data:
+        return []
+    buckets = {"Morgen (6-11)": [], "Eftermiddag (12-17)": [], "Aften (18-23)": [], "Nat / Ukendt": []}
+    for record in data:
+        date_str = str(record.get("date", ""))
+        hour = None
+        if "T" in date_str:
+            try:
+                hour = int(date_str.split("T")[1].split(":")[0])
+            except Exception:
+                pass
+        shots = record.get("result_shots", 0) or 0
+        hit_rate = round(record.get("result_hit", 0) / shots * 100, 2) if shots else 0
+        if hour is None:
+            buckets["Nat / Ukendt"].append(hit_rate)
+        elif 6 <= hour <= 11:
+            buckets["Morgen (6-11)"].append(hit_rate)
+        elif 12 <= hour <= 17:
+            buckets["Eftermiddag (12-17)"].append(hit_rate)
+        elif 18 <= hour <= 23:
+            buckets["Aften (18-23)"].append(hit_rate)
+        else:
+            buckets["Nat / Ukendt"].append(hit_rate)
+    return [
+        {"Tidspunkt": bucket, "Gns. hit %": round(sum(rates) / len(rates), 2), "Runder": len(rates)}
+        for bucket, rates in buckets.items()
+        if rates
+    ]
+
 def getPercentages(df, type=40):
     numberOfEntries = len(df)
     if numberOfEntries == 0:
@@ -353,72 +399,116 @@ def getPercentages(df, type=40):
         "normal_percentages": normal_percentages.to_dict(orient="records")[0]
     }
 
-def createFormGraph(data):
-    df = pd.DataFrame(data)
-    df = df[df['type'] == 40]
-    avg = df['result_hit'].mean().round(2) if not df.empty else 0
-    last10 = df.sort_values("date", ascending=False).head(10)
-    last10 = last10[['date', 'result_hit']]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["date"], y=df["result_hit"], mode="markers + lines", name="Resultater", marker=dict(color='LightSkyBlue', size=10)))
-    fig.add_trace(go.Scatter(x=df["date"], y=[avg]*len(df), mode="lines", name="Gennemsnit", line=dict(dash="dash")))
-
-    fig.update_layout(
-        template="plotly_dark",
-        title="Formkurve – Seneste 10 skydninger",
-        xaxis_title="Dato",
-        yaxis_title="Score"
+def _chartjs_card(config: dict, height: int = 300):
+    chart_id = "chart_" + uuid.uuid4().hex[:10]
+    config.setdefault("options", {})["maintainAspectRatio"] = False
+    config_json = json.dumps(config, ensure_ascii=False, default=lambda o: o.item() if hasattr(o, "item") else str(o))
+    return Card(
+        Div(Canvas(id=chart_id), cls="chart-container"),
+        Script(f"(function(){{var ctx=document.getElementById('{chart_id}').getContext('2d');new Chart(ctx,{config_json});}})()"),
+        cls="p-6 rounded-2xl shadow-xl"
     )
 
-    # Export til HTML div
-    graph_html = fig.to_html(full_html=False,
-                            include_plotlyjs='cdn',
-                            config={
-                                "displayModeBar": False,
-                                "staticPlot": True
-                    })
 
-    return Card(
-            Safe(graph_html),
-            cls="p-6 rounded-2xl shadow-xl"
-        )
+def createFormGraph(data):
+    df = pd.DataFrame(data)
+    df = df[df['type'] == 40].sort_values("date", ascending=True)
+    if df.empty:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+    avg = round(float(df['result_hit'].mean()), 2)
+    config = {
+        "type": "line",
+        "data": {
+            "labels": df["date"].tolist(),
+            "datasets": [
+                {
+                    "label": "Resultater",
+                    "data": df["result_hit"].tolist(),
+                    "borderColor": "#60a5fa",
+                    "backgroundColor": "rgba(96,165,250,0.15)",
+                    "pointRadius": 5,
+                    "tension": 0.1,
+                    "fill": False
+                },
+                {
+                    "label": "Gennemsnit",
+                    "data": [avg] * len(df),
+                    "borderColor": "#f59e0b",
+                    "borderDash": [6, 4],
+                    "pointRadius": 0,
+                    "tension": 0,
+                    "fill": False
+                }
+            ]
+        },
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "Formkurve", "color": "#f3f4f6"},
+                "legend": {"labels": {"color": "#e5e7eb"}}
+            },
+            "scales": {
+                "x": {"ticks": {"color": "#9ca3af", "maxRotation": 45}, "grid": {"color": "rgba(255,255,255,0.08)"}},
+                "y": {"ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}}
+            }
+        }
+    }
+    return _chartjs_card(config)
         
 
 def createStatsGraph(dataDict, title, xTitle, yTitle, Total=True, BarPlot=True):
     df = pd.DataFrame(dataDict)
+    if df.empty:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
     if Total:
-        # only keep the two first colums
         df = df.iloc[:, :2]
     else:
-        # remove the second column and keep the rest
         df = df.drop(df.columns[1], axis=1)
 
+    x_col = df.columns[0]
+    palette = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa"]
+    datasets = []
+    for i, col in enumerate(df.columns[1:]):
+        color = palette[i % len(palette)]
+        ds = {
+            "label": str(col),
+            "data": [v if v == v else 0 for v in df[col].tolist()],
+            "borderColor": color,
+            "backgroundColor": color
+        }
+        if not BarPlot:
+            ds["pointRadius"] = 5
+            ds["tension"] = 0.3
+            ds["fill"] = False
+        datasets.append(ds)
 
-    fig = go.Figure()
-    for column in df.columns[1:]:
-        if BarPlot:
-            fig.add_trace(go.Bar(x=df[df.columns[0]], y=df[column], name=column))
-        else:
-            fig.add_trace(go.Scatter(x=df[df.columns[0]], y=df[column], mode="markers + lines", name=column, marker=dict(size=10)))
-    fig.update_layout(
-        template="plotly_dark",
-        title=title,
-        xaxis_title=xTitle,
-        yaxis_title=yTitle
-    )
-
-    graph_html = fig.to_html(full_html=False,
-                            include_plotlyjs='cdn',
-                            config={
-                                "displayModeBar": False,
-                                "staticPlot": True
-                    })
-    
-    return Card(
-        Safe(graph_html),
-        cls="p-6 rounded-2xl shadow-xl"
-    )
+    config = {
+        "type": "bar" if BarPlot else "line",
+        "data": {
+            "labels": [str(v) for v in df[x_col].tolist()],
+            "datasets": datasets
+        },
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": title, "color": "#f3f4f6"},
+                "legend": {"labels": {"color": "#e5e7eb"}}
+            },
+            "scales": {
+                "x": {
+                    "title": {"display": True, "text": xTitle, "color": "#9ca3af"},
+                    "ticks": {"color": "#9ca3af"},
+                    "grid": {"color": "rgba(255,255,255,0.08)"}
+                },
+                "y": {
+                    "title": {"display": True, "text": yTitle, "color": "#9ca3af"},
+                    "ticks": {"color": "#9ca3af"},
+                    "grid": {"color": "rgba(255,255,255,0.08)"}
+                }
+            }
+        }
+    }
+    return _chartjs_card(config)
 
 
 def createTable(headers, df, value_keys, delete_key=None, delete_url=None):
@@ -579,7 +669,7 @@ def build_duer_grid(sideduer, skud):
         Div("Duer", cls="font-semibold text-sm mb-2"),
         Div("Single: 1, 1', 0, 0' | Double (markeret, 2 felter): 1, 0", cls="text-xs text-gray-400"),
         Input(type="hidden", id="skydning_cell_states", name="skydning_cell_states", value=""),
-        Div(cls="w-full")(
+        Div(cls="w-full overflow-x-auto")(
             Table(cls="table table-sm table-fixed w-full border border-gray-700 rounded-xl")(
                 Thead(
                     Tr(
@@ -844,14 +934,17 @@ def getStatsNavBar(active):
             cls="uk-active" if active == name else ""
         )
 
-    return TabContainer(
-        tab("Samlet", "Samlet", "/statistik"),
-        tab("Anledning", "Anledning", "/statistik/anledning"),
-        tab("Sted", "Sted", "/statistik/sted"),
-        tab("Vejr", "Vejr", "/statistik/vejr"),
-        tab("24 duer", "24 duer", "/statistik/24duer"),
-        tab("Miss", "Miss", "/statistik/miss"),
-        alt=True
+    return Div(
+        TabContainer(
+            tab("Samlet", "Samlet", "/statistik"),
+            tab("Anledning", "Anledning", "/statistik/anledning"),
+            tab("Sted", "Sted", "/statistik/sted"),
+            tab("Vejr", "Vejr", "/statistik/vejr"),
+            tab("24 duer", "24 duer", "/statistik/24duer"),
+            tab("Miss", "Miss", "/statistik/miss"),
+            alt=True
+        ),
+        cls="nav-scroll"
     )
 
 def getYearNavBar(years, active_year=None, base_path="/start"):
@@ -868,7 +961,7 @@ def getYearNavBar(years, active_year=None, base_path="/start"):
         )
         for year in years
     ])
-    return TabContainer(*items, alt=True)
+    return Div(TabContainer(*items, alt=True), cls="nav-scroll")
 
 def parse_saved_cell_entries(raw):
     if raw is None:
@@ -1079,6 +1172,67 @@ def getMissAnalysis(data):
         "extra_singles": extra_singles_rows
     }
 
+def getSingleVsDoubleStats(data):
+    side_order = ["venstre", "bag", "hoejre", "spids"]
+    side_labels = {"venstre": "Venstre", "bag": "Bag", "hoejre": "Højre", "spids": "Spids"}
+    stats = {side: {"single_misses": 0, "single_attempts": 0, "double_misses": 0, "double_attempts": 0} for side in side_order}
+
+    for record in (data or []):
+        side_entries, columns = extract_side_entries(record)
+        if not side_entries or columns not in (6, 10):
+            continue
+        double_cols = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
+        for side in side_order:
+            for col_idx, state in enumerate(side_entries[side]):
+                if col_idx in double_cols:
+                    stats[side]["double_attempts"] += 1
+                    if state in (3, 4):
+                        stats[side]["double_misses"] += 1
+                else:
+                    stats[side]["single_attempts"] += 1
+                    if state in (3, 4):
+                        stats[side]["single_misses"] += 1
+
+    result = []
+    for side in side_order:
+        s = stats[side]
+        result.append({
+            "side": side_labels[side],
+            "Enkeltdue miss %": round(s["single_misses"] / s["single_attempts"] * 100, 2) if s["single_attempts"] else 0,
+            "Dobbeltdue miss %": round(s["double_misses"] / s["double_attempts"] * 100, 2) if s["double_attempts"] else 0,
+        })
+    return result
+
+
+def getFirstVsSecondShotStats(data):
+    side_order = ["venstre", "bag", "hoejre", "spids"]
+    side_labels = {"venstre": "Venstre", "bag": "Bag", "hoejre": "Højre", "spids": "Spids"}
+    stats = {side: {1: 0, 2: 0, 3: 0, 4: 0} for side in side_order}
+
+    for record in (data or []):
+        side_entries, columns = extract_side_entries(record)
+        if not side_entries or columns not in (6, 10):
+            continue
+        double_cols = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
+        for side in side_order:
+            for col_idx, state in enumerate(side_entries[side]):
+                if col_idx not in double_cols:
+                    stats[side][state] = stats[side].get(state, 0) + 1
+
+    result = []
+    for side in side_order:
+        s = stats[side]
+        total = sum(s.values())
+        result.append({
+            "side": side_labels[side],
+            "Ramt 1. skud": round(s[1] / total * 100, 2) if total else 0,
+            "Ramt 2. skud": round(s[2] / total * 100, 2) if total else 0,
+            "Forbi 1. skud": round(s[3] / total * 100, 2) if total else 0,
+            "Forbi 2. skud": round(s[4] / total * 100, 2) if total else 0,
+        })
+    return result
+
+
 def renderMissPatternRow(row):
     columns = int(row.get("columns", 10))
     columns = 6 if columns == 6 else 10
@@ -1118,53 +1272,233 @@ def createMissProblemTable(rows):
     if not rows:
         return Div(P("Ingen data", cls="text-sm text-gray-400"))
 
-    return Table(cls="border-collapse border border-gray-100 table-auto w-full")(
-        Thead(
-            Tr(
-                Th("Duer", cls="text-left border text-bold"),
-                Th("Miss %", cls="text-left border text-bold"),
-                Th("Misses", cls="text-left border text-bold"),
-                Th("Forsøg", cls="text-left border text-bold")
+    return Div(
+        Table(cls="border-collapse border border-gray-100 table-auto w-full")(
+            Thead(
+                Tr(
+                    Th("Duer", cls="text-left border text-bold"),
+                    Th("Miss %", cls="text-left border text-bold"),
+                    Th("Misses", cls="text-left border text-bold"),
+                    Th("Forsøg", cls="text-left border text-bold")
+                )
+            ),
+            Tbody(
+                *[
+                    Tr(
+                        Td(renderMissPatternRow(row), cls="text-left border"),
+                        Td(f"{row['miss_rate']}%", cls="text-left border"),
+                        Td(str(row["misses"]), cls="text-left border"),
+                        Td(str(row["attempts"]), cls="text-left border")
+                    )
+                    for row in rows
+                ]
             )
         ),
-        Tbody(
-            *[
-                Tr(
-                    Td(renderMissPatternRow(row), cls="text-left border"),
-                    Td(f"{row['miss_rate']}%", cls="text-left border"),
-                    Td(str(row["misses"]), cls="text-left border"),
-                    Td(str(row["attempts"]), cls="text-left border")
-                )
-                for row in rows
-            ]
-        )
+        cls="overflow-x-auto"
     )
 
 def createExtraShotProblemTable(rows):
     if not rows:
         return Div(P("Ingen data", cls="text-sm text-gray-400"))
 
-    return Table(cls="border-collapse border border-gray-100 table-auto w-full")(
-        Thead(
-            Tr(
-                Th("Duer", cls="text-left border text-bold"),
-                Th("Ekstra skud %", cls="text-left border text-bold"),
-                Th("Ekstra skud", cls="text-left border text-bold"),
-                Th("Forsøg", cls="text-left border text-bold")
+    return Div(
+        Table(cls="border-collapse border border-gray-100 table-auto w-full")(
+            Thead(
+                Tr(
+                    Th("Duer", cls="text-left border text-bold"),
+                    Th("Ekstra skud %", cls="text-left border text-bold"),
+                    Th("Ekstra skud", cls="text-left border text-bold"),
+                    Th("Forsøg", cls="text-left border text-bold")
+                )
+            ),
+            Tbody(
+                *[
+                    Tr(
+                        Td(renderMissPatternRow(row), cls="text-left border"),
+                        Td(f"{row['extra_shot_rate']}%", cls="text-left border"),
+                        Td(str(row["extra_shots"]), cls="text-left border"),
+                        Td(str(row["attempts"]), cls="text-left border")
+                    )
+                    for row in rows
+                ]
             )
         ),
-        Tbody(
-            *[
-                Tr(
-                    Td(renderMissPatternRow(row), cls="text-left border"),
-                    Td(f"{row['extra_shot_rate']}%", cls="text-left border"),
-                    Td(str(row["extra_shots"]), cls="text-left border"),
-                    Td(str(row["attempts"]), cls="text-left border")
-                )
-                for row in rows
-            ]
-        )
+        cls="overflow-x-auto"
     )
+
+
+def createMissHeatmap(problem_cells):
+    side_order = ["venstre", "bag", "hoejre", "spids"]
+    side_labels = {"venstre": "Venstre", "bag": "Bag", "hoejre": "Højre", "spids": "Spids"}
+
+    if not problem_cells:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+
+    columns = max((row.get("columns", 10) for row in problem_cells), default=10)
+    columns = 6 if columns <= 6 else 10
+
+    def cell_bg(rate):
+        r = min(max(rate / 100.0, 0), 1)
+        if r <= 0.5:
+            return f"rgb({int(r * 2 * 230)},180,40)"
+        return f"rgb(230,{int((1 - (r - 0.5) * 2) * 180)},40)"
+
+    header_cells = [Th("Side", cls="p-1 text-xs text-gray-400 border border-gray-600")] + [
+        Th(str(i + 1), cls="p-1 text-xs text-center text-gray-400 border border-gray-600")
+        for i in range(columns)
+    ]
+    body_rows = []
+    for side in side_order:
+        cells = [Th(side_labels[side], cls="p-1 text-sm font-semibold border border-gray-600 whitespace-nowrap")]
+        for col in range(1, columns + 1):
+            match = next((r for r in problem_cells if r["side"] == side and r["col_start"] == col), None)
+            rate = match["miss_rate"] if match else 0
+            misses = match["misses"] if match else 0
+            attempts = match["attempts"] if match else 0
+            cells.append(Td(
+                Div(f"{rate:.0f}%", cls="text-xs font-bold leading-tight"),
+                Div(f"{misses}/{attempts}", cls="text-xs opacity-70 leading-tight"),
+                style=f"background:{cell_bg(rate)};color:#111",
+                cls="p-1 text-center border border-gray-600"
+            ))
+        body_rows.append(Tr(*cells))
+
+    return Card(
+        H3("Miss-rate heatmap per position", cls="font-bold mb-3"),
+        Div(
+            Table(
+                Thead(Tr(*header_cells)),
+                Tbody(*body_rows),
+                cls="w-full border-collapse text-sm"
+            ),
+            cls="overflow-x-auto"
+        ),
+        cls="p-6 rounded-2xl shadow-xl"
+    )
+
+
+def createSingleVsDoubleChart(stats):
+    if not stats:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+    df = pd.DataFrame(stats)
+    config = {
+        "type": "bar",
+        "data": {
+            "labels": df["side"].tolist(),
+            "datasets": [
+                {"label": "Enkeltdue miss %", "data": df["Enkeltdue miss %"].tolist(), "backgroundColor": "#60a5fa"},
+                {"label": "Dobbeltdue miss %", "data": df["Dobbeltdue miss %"].tolist(), "backgroundColor": "#f87171"}
+            ]
+        },
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "Enkelt- vs. dobbeltduer – miss rate per side", "color": "#f3f4f6"},
+                "legend": {"labels": {"color": "#e5e7eb"}}
+            },
+            "scales": {
+                "x": {"ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}},
+                "y": {"min": 0, "max": 100, "ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}}
+            }
+        }
+    }
+    return _chartjs_card(config)
+
+
+def createFirstVsSecondShotChart(stats):
+    if not stats:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+    df = pd.DataFrame(stats)
+    datasets = [
+        {"label": "Ramt 1. skud",  "data": df["Ramt 1. skud"].tolist(),  "backgroundColor": "#22c55e"},
+        {"label": "Ramt 2. skud",  "data": df["Ramt 2. skud"].tolist(),  "backgroundColor": "#eab308"},
+        {"label": "Forbi 1. skud", "data": df["Forbi 1. skud"].tolist(), "backgroundColor": "#f97316"},
+        {"label": "Forbi 2. skud", "data": df["Forbi 2. skud"].tolist(), "backgroundColor": "#ef4444"}
+    ]
+    config = {
+        "type": "bar",
+        "data": {"labels": df["side"].tolist(), "datasets": datasets},
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "1. vs. 2. skud – enkeltduer per side", "color": "#f3f4f6"},
+                "legend": {"labels": {"color": "#e5e7eb"}}
+            },
+            "scales": {
+                "x": {"stacked": True, "ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}},
+                "y": {"stacked": True, "min": 0, "max": 100, "ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}}
+            }
+        }
+    }
+    return _chartjs_card(config)
+
+
+def createTimeOfDayChart(stats):
+    if not stats:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+    df = pd.DataFrame(stats)
+    config = {
+        "type": "bar",
+        "data": {
+            "labels": df["Tidspunkt"].tolist(),
+            "datasets": [{
+                "label": "Gns. hit %",
+                "data": df["Gns. hit %"].tolist(),
+                "backgroundColor": "#3b82f6",
+                "borderRadius": 6
+            }]
+        },
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "Gennemsnitlig hit % per tidspunkt på dagen", "color": "#f3f4f6"},
+                "legend": {"display": False}
+            },
+            "scales": {
+                "x": {"ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}},
+                "y": {"min": 0, "max": 100, "ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}}
+            }
+        }
+    }
+    return _chartjs_card(config)
+
+
+def createOccasionRadarChart(occasion_percentages):
+    if not occasion_percentages:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+    categories = ["Venstre", "Bag", "Højre", "Spids"]
+    keys = ["venstre", "bag", "hoejre", "spids"]
+    palette = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#fb923c"]
+    datasets = []
+    for i, row in enumerate(occasion_percentages):
+        color = palette[i % len(palette)]
+        datasets.append({
+            "label": row.get("occasion", ""),
+            "data": [row.get(k, 0) for k in keys],
+            "borderColor": color,
+            "backgroundColor": color + "33",
+            "pointBackgroundColor": color
+        })
+    config = {
+        "type": "radar",
+        "data": {"labels": categories, "datasets": datasets},
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "Hit-rate per side og anledning", "color": "#f3f4f6"},
+                "legend": {"labels": {"color": "#e5e7eb"}}
+            },
+            "scales": {
+                "r": {
+                    "min": 0, "max": 100,
+                    "ticks": {"color": "#9ca3af", "backdropColor": "transparent"},
+                    "grid": {"color": "rgba(255,255,255,0.1)"},
+                    "pointLabels": {"color": "#e5e7eb"}
+                }
+            }
+        }
+    }
+    return _chartjs_card(config, height=400)
 
 
 def createStatsList(headers, df, value_keys, label_key=None):
@@ -1343,6 +1677,8 @@ def statistikAnledning(session, year: str = None):
             Card("Procenter per anledning", cls="font-bold text-center mb-2")(
                 createStatsList(percentageHeaders, pd.DataFrame(percetages["occasion_percentages"]), percentageValueKeys, label_key="occasion")
             ),
+            Div("Hit-rate per side og anledning", cls="divider text-2xl font-bold"),
+            createOccasionRadarChart(percetages["occasion_percentages"]),
             title="Statistik"
         )         
 
@@ -1427,6 +1763,8 @@ def statistikMiss(session, year: str = None):
         selected_year = None
 
     miss_data = getMissAnalysis(data)
+    single_vs_double_stats = getSingleVsDoubleStats(data)
+    first_vs_second_stats = getFirstVsSecondShotStats(data)
     troublesome_rows = [row for row in miss_data["problem_cells"] if row["misses"] > 0][:5]
     extra_singles_rows = [row for row in miss_data["extra_singles"] if row["extra_shots"] > 0][:5]
 
@@ -1444,6 +1782,12 @@ def statistikMiss(session, year: str = None):
             Card("Top 5", cls="font-bold text-center mb-2")(
                 createExtraShotProblemTable(extra_singles_rows)
             ),
+            Div("Enkelt- vs. dobbeltduer", cls="divider text-2xl font-bold"),
+            createSingleVsDoubleChart(single_vs_double_stats),
+            Div("1. vs. 2. skud – enkeltduer", cls="divider text-2xl font-bold"),
+            createFirstVsSecondShotChart(first_vs_second_stats),
+            Div("Miss-rate heatmap", cls="divider text-2xl font-bold"),
+            createMissHeatmap(miss_data["problem_cells"]),
             title="Statistik"
         )
     
@@ -1498,6 +1842,9 @@ def statistik(session, year: str = None):
             ),
 
             createFormGraph(data),
+
+            Div("Score per tidspunkt", cls="divider text-2xl font-bold"),
+            createTimeOfDayChart(getTimeOfDayStats(data)),
 
             Br(),
             Div("Resultater samlet", cls="divider text-2xl font-bold"),
