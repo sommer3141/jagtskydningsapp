@@ -17,7 +17,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SESSION_TOKEN = "jagtskydningsapp_token"
 
 DropDown_Sideduer_default = list(reversed(range(1, 11)))
-DropDown_Skud_default = ['10', '11', '12', '13', '14']
         
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -109,15 +108,18 @@ def getWindDirectionCategory(degrees):
     normalized_degrees = float(degrees) % 360
     return GetWindDirection(normalized_degrees)
 
-def getShootingData(userId: int = None):
+def getShootingData(userId: int = None, year: str = None):
     if userId is None:
         return []
     try:
-        response = supabase.from_("skydning") \
+        query = supabase.from_("skydning") \
             .select("*, skydebaner(name), vejr(temp, skydaekke, vind, vind_dir, weather_code)") \
-            .eq("userId", userId) \
-            .order("date", desc=True) \
-            .execute()
+            .eq("userId", userId)
+        if year is not None:
+            start_date = f"{year}-01-01"
+            end_date = f"{int(year) + 1}-01-01"
+            query = query.gte("date", start_date).lt("date", end_date)
+        response = query.order("date", desc=True).execute()
     except Exception as e:
         print(f"Fejl ved hentning af data: {e}")
         return []
@@ -140,16 +142,19 @@ def getDistinctShoortingYears(userId: int = None):
         years.add(year)
     return sorted(list(years), reverse=True)
 
-def getShootingData24Duer(userId: int = None):
+def getShootingData24Duer(userId: int = None, year: str = None):
     if userId is None:
         return []
     try:
-        response = supabase.from_("skydning") \
+        query = supabase.from_("skydning") \
             .select("*, skydebaner(name), vejr(temp, skydaekke, vind, vind_dir, weather_code)") \
             .eq("userId", userId) \
-            .eq("type", 24) \
-            .order("date", desc=True) \
-            .execute()
+            .eq("type", 24)
+        if year is not None:
+            start_date = f"{year}-01-01"
+            end_date = f"{int(year) + 1}-01-01"
+            query = query.gte("date", start_date).lt("date", end_date)
+        response = query.order("date", desc=True).execute()
     except Exception as e:
         print(f"Fejl ved hentning af data: {e}")
         return []
@@ -332,6 +337,55 @@ def getTimeOfDayStats(data):
         for bucket, rates in buckets.items()
         if rates
     ]
+
+def getTrendStats(data):
+    if not data:
+        return {"shot_trend": [], "monthly_trend": []}
+
+    df = pd.DataFrame(data).copy()
+    if df.empty or "date" not in df.columns:
+        return {"shot_trend": [], "monthly_trend": []}
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        return {"shot_trend": [], "monthly_trend": []}
+
+    df = df.sort_values("date")
+    df["hit_rate"] = df.apply(
+        lambda row: round((row["result_hit"] / row["result_shots"] * 100), 2) if row.get("result_shots", 0) else 0,
+        axis=1
+    )
+    df["rolling_hit_rate"] = df["hit_rate"].rolling(window=5, min_periods=1).mean().round(2)
+    df["cumulative_hit_rate"] = (
+        df["result_hit"].cumsum() / df["result_shots"].cumsum().replace(0, pd.NA) * 100
+    ).fillna(0).round(2)
+
+    shot_trend = [
+        {
+            "date": row["date"].strftime("%Y-%m-%d"),
+            "hit_rate": row["hit_rate"],
+            "rolling_hit_rate": row["rolling_hit_rate"],
+            "cumulative_hit_rate": row["cumulative_hit_rate"]
+        }
+        for _, row in df.iterrows()
+    ]
+
+    monthly_df = df.copy()
+    monthly_df["month"] = monthly_df["date"].dt.to_period("M").astype(str)
+    monthly_trend = monthly_df.groupby("month", as_index=False).agg(
+        result_hit=("result_hit", "sum"),
+        result_shots=("result_shots", "sum"),
+        shootings=("date", "count")
+    )
+    monthly_trend["hit_rate"] = (
+        monthly_trend["result_hit"] / monthly_trend["result_shots"].replace(0, pd.NA) * 100
+    ).fillna(0).round(2)
+
+    return {
+        "shot_trend": shot_trend,
+        "monthly_trend": monthly_trend.to_dict(orient="records")
+    }
 
 def getPercentages(df, type=40):
     numberOfEntries = len(df)
@@ -631,8 +685,9 @@ def tilFoejSkydniner(entry):
         Td(A("Slet", href=f"/sletSkydning/{entry['id']}", cls="inline-block m-1 p-1 bg-blue-500 text-white no-underline rounded"), cls="border text-base")
     )
 
-def build_duer_grid(sideduer, skud):
+def build_duer_grid(sideduer, reset_total_display=False):
     columns = len(sideduer)
+    score_display_value = f"{columns * 4}/{columns * 4}"
     double_columns = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
     side_rows = [
         ("venstre", "Venstre"),
@@ -682,9 +737,19 @@ def build_duer_grid(sideduer, skud):
         ),
         Div(cls="text-base font-semibold")(
             Span("Score: "),
-            Span("0/0", id="skydning_total_score_display")
+            Span(score_display_value, id="skydning_total_score_display")
         ),
         Script("""
+            window.activeDuerContainer = document.currentScript ? document.currentScript.closest('#duerContainer') : document.getElementById('duerContainer');
+
+            function getActiveDuerContainer(triggerCell) {
+                if (triggerCell) {
+                    const nearestContainer = triggerCell.closest('#duerContainer');
+                    if (nearestContainer) return nearestContainer;
+                }
+                return window.activeDuerContainer || document.getElementById('duerContainer');
+            }
+
             function duerStateColorClass(state) {
                 if (state === 2) return 'bg-yellow-500 text-black';
                 if (state === 3 || state === 4) return 'bg-red-600 text-white';
@@ -710,15 +775,18 @@ def build_duer_grid(sideduer, skud):
                 };
                 cell.textContent = stateSymbols[nextState];
                 applyDuerCellVisualState(cell, nextState);
-                updateDuerTotals();
+                updateDuerTotals(cell);
             }
 
-            function updateDuerTotals() {
+            function updateDuerTotals(triggerCell) {
+                const container = getActiveDuerContainer(triggerCell);
+                if (!container) return;
+
                 const sides = ["venstre", "bag", "hoejre", "spids"];
                 let totalHits = 0;
                 let totalShots = 0;
                 sides.forEach((side) => {
-                    const cells = document.querySelectorAll('#duerContainer .duer-cell[data-side="' + side + '"]');
+                    const cells = container.querySelectorAll('.duer-cell[data-side="' + side + '"]');
                     let hits = 0;
                     let shots = 0;
 
@@ -737,8 +805,8 @@ def build_duer_grid(sideduer, skud):
                         }
                     });
 
-                    const hitHidden = document.getElementById('skydning_' + side);
-                    const shotHidden = document.getElementById('skydning_' + side + '_skud');
+                    const hitHidden = container.querySelector('#skydning_' + side);
+                    const shotHidden = container.querySelector('#skydning_' + side + '_skud');
 
                     if (hitHidden) hitHidden.value = String(hits);
                     if (shotHidden) shotHidden.value = String(shots);
@@ -747,21 +815,24 @@ def build_duer_grid(sideduer, skud):
                     totalShots += shots;
                 });
 
-                const totalScoreDisplay = document.getElementById('skydning_total_score_display');
+                const totalScoreDisplay = container.querySelector('#skydning_total_score_display');
                 if (totalScoreDisplay) totalScoreDisplay.textContent = String(totalHits) + '/' + String(totalShots);
 
                 const statePayload = sides.map((side) => {
-                    const cells = document.querySelectorAll('#duerContainer .duer-cell[data-side="' + side + '"]');
+                    const cells = container.querySelectorAll('.duer-cell[data-side="' + side + '"]');
                     return {
                         side: side,
                         entries: Array.from(cells).map((cell) => Number(cell.dataset.state || '1'))
                     };
                 });
 
-                const stateInput = document.getElementById('skydning_cell_states');
+                const stateInput = container.querySelector('#skydning_cell_states');
                 if (stateInput) stateInput.value = JSON.stringify(statePayload);
             }
-            document.querySelectorAll('#duerContainer .duer-cell').forEach((cell) => {
+            const initialContainer = getActiveDuerContainer();
+            if (!initialContainer) return;
+
+            initialContainer.querySelectorAll('.duer-cell').forEach((cell) => {
                 applyDuerCellVisualState(cell, Number(cell.dataset.state || '1'));
             });
             updateDuerTotals();
@@ -950,7 +1021,7 @@ def getStatsNavBar(active):
 def getYearNavBar(years, active_year=None, base_path="/start"):
     items = [
         Li(
-            A("Alle", hx_get=base_path, hx_target="body", hx_swap="outerHTML"),
+            A("Alle", hx_get=f"{base_path}/all", hx_target="body", hx_swap="outerHTML"),
             cls="uk-active" if active_year is None else ""
         )
     ]
@@ -1432,6 +1503,110 @@ def createFirstVsSecondShotChart(stats):
     }
     return _chartjs_card(config)
 
+def createTrendChart(stats):
+    if not stats:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+
+    df = pd.DataFrame(stats)
+    config = {
+        "type": "line",
+        "data": {
+            "labels": df["date"].tolist(),
+            "datasets": [
+                {
+                    "label": "Hit-rate",
+                    "data": df["hit_rate"].tolist(),
+                    "borderColor": "#60a5fa",
+                    "backgroundColor": "rgba(96,165,250,0.12)",
+                    "pointRadius": 3,
+                    "tension": 0.2,
+                    "fill": False
+                },
+                {
+                    "label": "5-skuds snit",
+                    "data": df["rolling_hit_rate"].tolist(),
+                    "borderColor": "#f59e0b",
+                    "borderDash": [6, 4],
+                    "pointRadius": 0,
+                    "tension": 0.2,
+                    "fill": False
+                },
+                {
+                    "label": "Kumulativt snit",
+                    "data": df["cumulative_hit_rate"].tolist(),
+                    "borderColor": "#34d399",
+                    "borderDash": [2, 3],
+                    "pointRadius": 0,
+                    "tension": 0.2,
+                    "fill": False
+                }
+            ]
+        },
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "Hit-rate trend over tid (%)", "color": "#f3f4f6"},
+                "legend": {"labels": {"color": "#e5e7eb"}}
+            },
+            "scales": {
+                "x": {"ticks": {"color": "#9ca3af", "maxRotation": 45}, "grid": {"color": "rgba(255,255,255,0.08)"}},
+                "y": {"min": 60, "max": 100, "ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}}
+            }
+        }
+    }
+    return _chartjs_card(config)
+
+def createMonthlyTrendChart(stats):
+    if not stats:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+
+    df = pd.DataFrame(stats)
+    config = {
+        "type": "line",
+        "data": {
+            "labels": df["month"].tolist(),
+            "datasets": [
+                {
+                    "label": "Månedlig hit-rate",
+                    "data": df["hit_rate"].tolist(),
+                    "borderColor": "#a78bfa",
+                    "backgroundColor": "rgba(167,139,250,0.12)",
+                    "pointRadius": 4,
+                    "tension": 0.2,
+                    "fill": False
+                },
+                {
+                    "label": "Antal skydninger",
+                    "data": df["shootings"].tolist(),
+                    "borderColor": "#f87171",
+                    "backgroundColor": "rgba(248,113,113,0.12)",
+                    "pointRadius": 3,
+                    "tension": 0.2,
+                    "fill": False,
+                    "yAxisID": "y1"
+                }
+            ]
+        },
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "Månedlig hit-rate (%)", "color": "#f3f4f6"},
+                "legend": {"labels": {"color": "#e5e7eb"}}
+            },
+            "scales": {
+                "x": {"ticks": {"color": "#9ca3af", "maxRotation": 45}, "grid": {"color": "rgba(255,255,255,0.08)"}},
+                "y": {"min": 60, "max": 100, "ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}},
+                "y1": {
+                    "position": "right",
+                    "min": 0,
+                    "ticks": {"color": "#9ca3af"},
+                    "grid": {"drawOnChartArea": False}
+                }
+            }
+        }
+    }
+    return _chartjs_card(config)
+
 
 def createTimeOfDayChart(stats):
     if not stats:
@@ -1457,6 +1632,61 @@ def createTimeOfDayChart(stats):
             "scales": {
                 "x": {"ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}},
                 "y": {"min": 0, "max": 100, "ticks": {"color": "#9ca3af"}, "grid": {"color": "rgba(255,255,255,0.08)"}}
+            }
+        }
+    }
+    return _chartjs_card(config)
+
+
+def getType40HitDistribution(data):
+    if not data:
+        return []
+    df = pd.DataFrame(data)
+    if df.empty or "type" not in df.columns or "result_hit" not in df.columns:
+        return []
+
+    df = df[df["type"] == 40]
+    if df.empty:
+        return []
+
+    counts = df.groupby("result_hit", as_index=False).size().rename(columns={"size": "Runder"})
+    counts["result_hit"] = counts["result_hit"].astype(int)
+    counts = counts.sort_values("result_hit", ascending=False)
+    return counts.to_dict(orient="records")
+
+
+def createRoundTypeChart(stats):
+    if not stats:
+        return Div(P("Ingen data", cls="text-sm text-gray-400"))
+    df = pd.DataFrame(stats)
+    config = {
+        "type": "bar",
+        "data": {
+            "labels": [str(int(v)) for v in df["result_hit"].tolist()],
+            "datasets": [{
+                "label": "Antal runder",
+                "data": df["Runder"].tolist(),
+                "backgroundColor": "#60a5fa"
+            }]
+        },
+        "options": {
+            "responsive": True,
+            "plugins": {
+                "title": {"display": True, "text": "Fordeling af træffere (kun 40 duer)", "color": "#f3f4f6"},
+                "legend": {"display": False}
+            },
+            "scales": {
+                "x": {
+                    "title": {"display": True, "text": "Antal træffere", "color": "#9ca3af"},
+                    "ticks": {"color": "#9ca3af"},
+                    "grid": {"color": "rgba(255,255,255,0.08)"}
+                },
+                "y": {
+                    "beginAtZero": True,
+                    "title": {"display": True, "text": "Antal runder", "color": "#9ca3af"},
+                    "ticks": {"color": "#9ca3af", "precision": 0},
+                    "grid": {"color": "rgba(255,255,255,0.08)"}
+                }
             }
         }
     }
@@ -1527,12 +1757,10 @@ def createStatsList(headers, df, value_keys, label_key=None):
 def opdaterSkydningType(skydning_type: str):
     if skydning_type == "40":
         sideduer = list(reversed(range(1, 11)))
-        skud = ['10', '11', '12', '13', '14']
     else:
         sideduer = list(reversed(range(1, 7)))
-        skud = ['6', '7', '8']
 
-    return build_duer_grid(sideduer, skud)
+    return build_duer_grid(sideduer, reset_total_display=True)
 
 @app.route("/sletSkydning/{skydning_id}")
 def sletSkydning(session, skydning_id: int):
@@ -1545,14 +1773,13 @@ def sletSkydning(session, skydning_id: int):
                         Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
                     ))
     success = deleteShootingData(skydning_id, userId)
-    if not success:
-        return Container(
-                    Body(
-                        H1("Fejl"),
-                        P("Der opstod en fejl ved sletning af skydningen. Prøv igen senere."),
-                        Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
-                    ))
-    return Redirect("/start")
+    return Container(
+                Body(
+                    H1("Fejl"),
+                    P("Der opstod en fejl ved sletning af skydningen. Prøv igen senere."),
+                    Button("Tilbage til start", hx_get="/start"), id="errorPage", style="text-align: center; padding: 50px; width: auto;"
+                ))
+
 
 
 @app.route("/")
@@ -1601,35 +1828,31 @@ def getDataframeFromData(data, filter_type=40):
         df = df_raw.drop(columns=["skydebaner"]).join(df_skydebaner)
     except Exception as e:
         df.drop(columns=["skydebaner"], inplace=True)
-    
-    try:    
+
+    try:
         df_vejr = pd.json_normalize(df_raw["vejr"]).add_prefix("vejr.")
         df = pd.concat([df.drop(columns=["vejr"]), df_vejr], axis=1)
     except Exception as e:
-        df.drop(columns=["vejr"], inplace=True)     
-    
-    df = df[df['type'] == filter_type]
+        df.drop(columns=["vejr"], inplace=True)
+
+    df = df[df["type"] == filter_type]
     return df
- 
+
+
 @app.route("/statistik/24duer")
 @app.route("/statistik/24duer/{year}")
 def statistik24duer(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
-    print(f"User ID for statistik/24duer: {userId}")
     years = getDistinctShoortingYears(userId=userId)
-    data = getShootingData24Duer(userId=userId)
-    if year is not None:
-        selected_year = str(year)
-        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
-    else:
-        selected_year = None
+    selected_year = None if year in (None, "all") else str(year)
+    data = getShootingData24Duer(userId=userId, year=selected_year)
     df = getDataframeFromData(data, filter_type=24)
 
     averages_24duer = getAverages(df)
 
     resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
     resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
- 
+
     return AppLayout(
             getNavBar(active="Statistik"),
             Br(),
@@ -1648,12 +1871,8 @@ def statistik24duer(session, year: str = None):
 def statistikAnledning(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
     years = getDistinctShoortingYears(userId=userId)
-    data = getShootingData(userId=userId)
-    if year is not None:
-        selected_year = str(year)
-        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
-    else:
-        selected_year = None
+    selected_year = None if year in (None, "all") else str(year)
+    data = getShootingData(userId=userId, year=selected_year)
     df = getDataframeFromData(data)
 
     averages = getAverages(df)
@@ -1680,19 +1899,15 @@ def statistikAnledning(session, year: str = None):
             Div("Hit-rate per side og anledning", cls="divider text-2xl font-bold"),
             createOccasionRadarChart(percetages["occasion_percentages"]),
             title="Statistik"
-        )         
+        )
 
 @app.route("/statistik/sted")
 @app.route("/statistik/sted/{year}")
 def statistikSted(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
     years = getDistinctShoortingYears(userId=userId)
-    data = getShootingData(userId=userId)
-    if year is not None:
-        selected_year = str(year)
-        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
-    else:
-        selected_year = None
+    selected_year = None if year in (None, "all") else str(year)
+    data = getShootingData(userId=userId, year=selected_year)
     df = getDataframeFromData(data)
 
     averages = getAverages(df)
@@ -1717,18 +1932,14 @@ def statistikSted(session, year: str = None):
             ),
             title="Statistik"
         )
- 
+
 @app.route("/statistik/vejr")
 @app.route("/statistik/vejr/{year}")
 def statistikVejr(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
     years = getDistinctShoortingYears(userId=userId)
-    data = getShootingData(userId=userId)
-    if year is not None:
-        selected_year = str(year)
-        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
-    else:
-        selected_year = None
+    selected_year = None if year in (None, "all") else str(year)
+    data = getShootingData(userId=userId, year=selected_year)
     df = getDataframeFromData(data)
 
     weatherDataPercentages = getPercentagesByWeather(df)
@@ -1750,17 +1961,84 @@ def statistikVejr(session, year: str = None):
             title="Statistik"
         )
 
+@app.route("/statistik")
+@app.route("/statistik/{year}")
+def statistik(session, year: str = None):
+    userId = session.get(SESSION_TOKEN)
+    years = getDistinctShoortingYears(userId=userId)
+    selected_year = None if year in (None, "all") else str(year)
+    data = getShootingData(userId=userId, year=selected_year)
+    df = getDataframeFromData(data)
+
+    averages = getAverages(df)
+    percetages = getPercentages(df)
+
+    tavleHits, tavleShots = calculateTavleScore(df)
+    totalHits, totalShots = getTotalHitsAndShots(df)
+
+    resultHeaders = ["Ramte", "Skud", "Venstre", "Venstre skud", "Højre", "Højre skud", "Bag", "Bag skud", "Spids", "Spids skud"]
+    percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
+    resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
+    percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
+    trend_data = getTrendStats(data)
+    round_type_data = getType40HitDistribution(data)
+    return AppLayout(
+
+            getNavBar(active="Statistik"),
+            Br(),
+            getStatsNavBar(active="Samlet"),
+            getYearNavBar(years, active_year=selected_year, base_path="/statistik"),
+            Br(),
+
+            Grid(
+                Card(cls="p-5 rounded-2xl shadow-lg text-center")(
+                    P("Tavle", cls="text-gray-400"),
+                    H2(f"{round(tavleHits,2)} / {round(tavleShots,2)}",
+                    cls="text-2xl font-bold")
+                ),
+                Card(cls="p-5 rounded-2xl shadow-lg text-center")(
+                    P("Total", cls="text-gray-400"),
+                    H2(f"{round(totalHits,2)} / {round(totalShots,2)}",
+                    cls="text-2xl font-bold")
+                ),
+                Card(cls="p-5 rounded-2xl shadow-lg text-center bg-blue-600 text-white")(
+                    P("Total %", cls="text-blue-100"),
+                    H2(f"{round(totalHits/totalShots*100,2)}%",
+                    cls="text-3xl font-bold")
+                ),
+                cls="grid grid-cols-1 md:grid-cols-3 gap-4"
+            ),
+
+            Div("Hit-rate trend over tid (%)", cls="divider text-2xl font-bold"),
+            createTrendChart(trend_data["shot_trend"]),
+
+            Div("Fordeling af træffere (40 duer)", cls="divider text-2xl font-bold"),
+            createRoundTypeChart(round_type_data),
+
+            createFormGraph(data),
+
+            Div("Score per tidspunkt", cls="divider text-2xl font-bold"),
+            createTimeOfDayChart(getTimeOfDayStats(data)),
+
+            Br(),
+            Div("Resultater samlet", cls="divider text-2xl font-bold"),
+            Card("Gennemsnit samlet", cls="font-bold text-center mb-2")(
+                createStatsList(resultHeaders, pd.DataFrame([averages["normal_averages"]]), resultValueKeys)
+            ),
+            Card("Overall procenter", cls="font-bold text-center mb-2")(
+                createStatsList(percentageHeaders, pd.DataFrame([percetages["normal_percentages"]]), percentageValueKeys)
+            )
+            ,
+            title="Statistik"
+        )
+
 @app.route("/statistik/miss")
 @app.route("/statistik/miss/{year}")
 def statistikMiss(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
     years = getDistinctShoortingYears(userId=userId)
-    data = getShootingData(userId=userId)
-    if year is not None:
-        selected_year = str(year)
-        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
-    else:
-        selected_year = None
+    selected_year = None if year in (None, "all") else str(year)
+    data = getShootingData(userId=userId, year=selected_year)
 
     miss_data = getMissAnalysis(data)
     single_vs_double_stats = getSingleVsDoubleStats(data)
@@ -1796,12 +2074,8 @@ def statistikMiss(session, year: str = None):
 def statistik(session, year: str = None):
     userId = session.get(SESSION_TOKEN)
     years = getDistinctShoortingYears(userId=userId)
-    data = getShootingData(userId=userId)
-    if year is not None:
-        selected_year = str(year)
-        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
-    else:
-        selected_year = None
+    selected_year = None if year in (None, "all") else str(year)
+    data = getShootingData(userId=userId, year=selected_year)
     df = getDataframeFromData(data)
 
     averages = getAverages(df)
@@ -1814,6 +2088,7 @@ def statistik(session, year: str = None):
     percentageHeaders = ["Ramte %", "Venstre %", "Højre %", "Bag %", "Spids %"]
     resultValueKeys = ["result_hit", "result_shots", "venstre", "venstre_skud", "hoejre", "hoejre_skud", "bag", "bag_skud", "spids", "spids_skud"]
     percentageValueKeys = ["result_hit", "venstre", "hoejre", "bag", "spids"]
+    round_type_data = getType40HitDistribution(data)
     return AppLayout(
 
             getNavBar(active="Statistik"),
@@ -1843,6 +2118,9 @@ def statistik(session, year: str = None):
 
             createFormGraph(data),
 
+            Div("Fordeling af træffere (40 duer)", cls="divider text-2xl font-bold"),
+            createRoundTypeChart(round_type_data),
+
             Div("Score per tidspunkt", cls="divider text-2xl font-bold"),
             createTimeOfDayChart(getTimeOfDayStats(data)),
 
@@ -1861,11 +2139,8 @@ def statistik(session, year: str = None):
 
 def renderStartPage(session, selected_year=None):
     userId = session.get(SESSION_TOKEN)
-    data = getShootingData(userId=userId)
+    data = getShootingData(userId=userId, year=selected_year)
     years = getDistinctShoortingYears(userId=userId)
-    if selected_year is not None:
-        selected_year = str(selected_year)
-        data = [entry for entry in data if str(entry.get("date", "")).startswith(f"{selected_year}-")]
 
     return AppLayout(
 
@@ -1919,9 +2194,13 @@ def startPage(session):
     current_year = str(pd.Timestamp.now().year)
     return renderStartPage(session, selected_year=current_year if current_year in years else None)
 
+@app.route("/start/all")
+def startPageAll(session):
+    return renderStartPage(session, selected_year=None)
+
 @app.route("/start/{year}")
 def startPageByYear(session, year: str):
-    return renderStartPage(session, selected_year=year)
+    return renderStartPage(session, selected_year=None if year == "all" else year)
 
 @app.route("/visSkydning/{skydning_id}")
 def visSkydning(skydning_id: int):
@@ -2030,11 +2309,24 @@ def visSkydning(skydning_id: int):
                     Button(
                         "Slet skydning",
                         cls=ButtonT.secondary,
-                        hx_get=f"/sletSkydning/{data['id']}",
-                        hx_swap="outerHTML",
-                        hx_target="body",
-                        hx_trigger="click",
+                        data_uk_toggle="target: #confirmDeleteModal",
                     )
+                ),
+
+                Modal(
+                    Div(cls='p-6 max-w-md')(
+                        ModalTitle("Bekræft sletning", cls="mb-4 text-2xl font-bold text-center"),
+                        P("Er du sikker på, at du vil slette denne skydning?", cls="text-center"),
+                        Br(),
+                        DivRAligned(
+                            ModalCloseButton("Annuller", cls=ButtonT.ghost),
+                            A(
+                                "Ja, slet",
+                                cls=ButtonT.secondary,
+                                href=f"/sletSkydning/{data['id']}"
+                            ), cls='space-x-2'
+                        )
+                    ), id="confirmDeleteModal", open=False
                 ),
 
                 cls="max-w-3xl mx-auto p-4 space-y-4"
@@ -2042,11 +2334,13 @@ def visSkydning(skydning_id: int):
     
 
 def nySkydning():
+    skydebane_names = [str(skydebane["name"]) for skydebane in skydebaner]
+    default_skydebane_idx = skydebane_names.index("Sevel Flugtskydebane") if "Sevel Flugtskydebane" in skydebane_names else 0
     return Modal(
         Div(cls='p-6 max-w-4xl')(
             ModalTitle("Opret ny skydning", cls="mb-6 text-2xl font-bold text-center"),
             Form(cls='space-y-6', hx_post="/gemSkydning", hx_swap="outerHTML")(
-                LabelSelect(*Options(*[str(skydebane["name"]) for skydebane in skydebaner]), label="Sted", name="skydning_sted"),
+                LabelSelect(*Options(*skydebane_names, selected_idx=default_skydebane_idx), label="Sted", name="skydning_sted"),
                 LabelSelect(
                     *Options(*[str(i) for i in getAnledninger()], selected_idx=1, disabled_idxs={0}), label="Anledning", name="skydning_occation"
                 ),
@@ -2054,11 +2348,11 @@ def nySkydning():
                 Div(cls="space-y-2")(
                     FormLabel("Runde"),
                     DivLAligned(
-                        Radio(name="skydning_type", value="40", checked=True, hx_get="/opdaterSkydningType/40", hx_target="#duerContainer", hx_trigger="change")("40"),
-                        Radio(name="skydning_type", value="24", hx_get="/opdaterSkydningType/24", hx_target="#duerContainer", hx_trigger="change")("24")
+                        Radio(name="skydning_type", value="40", checked=True, hx_get="/opdaterSkydningType/40", hx_target="#duerContainer", hx_swap="outerHTML", hx_trigger="change")("40"),
+                        Radio(name="skydning_type", value="24", hx_get="/opdaterSkydningType/24", hx_target="#duerContainer", hx_swap="outerHTML", hx_trigger="change")("24")
                     )
                 ),
-                build_duer_grid(DropDown_Sideduer_default, DropDown_Skud_default),
+                build_duer_grid(DropDown_Sideduer_default),
                 DivRAligned(
                     ModalCloseButton("Anuller", cls=ButtonT.ghost),
                     Button(
