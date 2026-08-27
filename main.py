@@ -688,6 +688,10 @@ def tilFoejSkydniner(entry):
 def build_duer_grid(sideduer, reset_total_display=False):
     columns = len(sideduer)
     score_display_value = f"{columns * 4}/{columns * 4}"
+    default_cell_states = json.dumps([
+        {"side": side, "entries": [1] * columns}
+        for side in ["venstre", "bag", "hoejre", "spids"]
+    ], separators=(",", ":"))
     double_columns = {1, 2, 4, 5} if columns == 6 else {1, 2, 4, 5, 7, 8}
     side_rows = [
         ("venstre", "Venstre"),
@@ -723,7 +727,7 @@ def build_duer_grid(sideduer, reset_total_display=False):
     return Div(
         Div("Duer", cls="font-semibold text-sm mb-2"),
         Div("Single: 1, 1', 0, 0' | Double (markeret, 2 felter): 1, 0", cls="text-xs text-gray-400"),
-        Input(type="hidden", id="skydning_cell_states", name="skydning_cell_states", value=""),
+        Input(type="hidden", id="skydning_cell_states", name="skydning_cell_states", value=default_cell_states),
         Div(cls="w-full overflow-x-auto")(
             Table(cls="table table-sm table-fixed w-full border border-gray-700 rounded-xl")(
                 Thead(
