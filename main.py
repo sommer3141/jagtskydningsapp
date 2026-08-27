@@ -762,7 +762,7 @@ def build_duer_grid(sideduer, reset_total_display=False):
                 colorClasses.forEach((className) => cell.classList.add(className));
             }
 
-            function cycleDuerCell(cell) {
+            window.cycleDuerCell = function(cell) {
                 const current = Number(cell.dataset.state || '1');
                 const isDouble = cell.dataset.isDouble === '1';
                 const nextState = isDouble ? (current === 1 ? 3 : 1) : (current >= 4 ? 1 : current + 1);
@@ -830,12 +830,12 @@ def build_duer_grid(sideduer, reset_total_display=False):
                 if (stateInput) stateInput.value = JSON.stringify(statePayload);
             }
             const initialContainer = getActiveDuerContainer();
-            if (!initialContainer) return;
-
-            initialContainer.querySelectorAll('.duer-cell').forEach((cell) => {
-                applyDuerCellVisualState(cell, Number(cell.dataset.state || '1'));
-            });
-            updateDuerTotals();
+            if (initialContainer) {
+                initialContainer.querySelectorAll('.duer-cell').forEach((cell) => {
+                    applyDuerCellVisualState(cell, Number(cell.dataset.state || '1'));
+                });
+                updateDuerTotals();
+            }
         """),
         id="duerContainer",
         cls="space-y-3"
