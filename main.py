@@ -464,12 +464,12 @@ def _chartjs_card(config: dict, height: int = 300):
     )
 
 
-def createFormGraph(data):
+def createFormGraph(data, result_key="result_hit", title="Formkurve"):
     df = pd.DataFrame(data)
     df = df[df['type'] == 40].sort_values("date", ascending=True)
     if df.empty:
         return Div(P("Ingen data", cls="text-sm text-gray-400"))
-    avg = round(float(df['result_hit'].mean()), 2)
+    avg = round(float(df[result_key].mean()), 2)
     config = {
         "type": "line",
         "data": {
@@ -477,7 +477,7 @@ def createFormGraph(data):
             "datasets": [
                 {
                     "label": "Resultater",
-                    "data": df["result_hit"].tolist(),
+                    "data": df[result_key].tolist(),
                     "borderColor": "#60a5fa",
                     "backgroundColor": "rgba(96,165,250,0.15)",
                     "pointRadius": 5,
@@ -498,7 +498,7 @@ def createFormGraph(data):
         "options": {
             "responsive": True,
             "plugins": {
-                "title": {"display": True, "text": "Formkurve", "color": "#f3f4f6"},
+                "title": {"display": True, "text": title, "color": "#f3f4f6"},
                 "legend": {"labels": {"color": "#e5e7eb"}}
             },
             "scales": {
@@ -2121,6 +2121,15 @@ def statistik(session, year: str = None):
             ),
 
             createFormGraph(data),
+
+            Div("Formkurver per side (40 duer)", cls="divider text-2xl font-bold"),
+            Div(
+                createFormGraph(data, "venstre", "Formkurve - venstre"),
+                createFormGraph(data, "bag", "Formkurve - bag"),
+                createFormGraph(data, "hoejre", "Formkurve - højre"),
+                createFormGraph(data, "spids", "Formkurve - spids"),
+                cls="space-y-4"
+            ),
 
             Div("Fordeling af træffere (40 duer)", cls="divider text-2xl font-bold"),
             createRoundTypeChart(round_type_data),
